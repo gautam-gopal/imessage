@@ -11,14 +11,14 @@ export const useAuthStore = create((set, get) => ({
   onlineUsers: [],
   socket: null,
 
-  checkAuth: async () => {
+  checkAuth: async (getToken) => {
     set({ isCheckingAuth: true });
 
     try {
       const res = await axiosInstance.get("/auth/check");
       set({ authUser: res.data });
-
-      get().connectSocket(res.data);
+      const token = await getToken();
+      get().connectSocket(res.data, token);
     } catch (error) {
       console.error("Error in checkAuth:", error);
       set({ authUser: null });
@@ -32,10 +32,10 @@ export const useAuthStore = create((set, get) => ({
     get().disconnectSocket();
   },
 
-  connectSocket: (user) => {
-    if (!user || get().socket?.connected) return;
+  connectSocket: (user, token) => {
+    if (!user || !token || get().socket?.connected) return;
 
-    const socket = io(BASE_URL, { query: { userId: user._id } });
+    const socket = io(BASE_URL, { auth: { token } });
 
     set({ socket });
 
