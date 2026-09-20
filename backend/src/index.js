@@ -8,6 +8,8 @@ import path from "path";
 
 import { clerkMiddleware } from "@clerk/express";
 
+import { errorHandler } from "./middleware/error.middleware.js";
+
 import User from "./models/user.model.js";
 import { connectDB } from "./lib/db.js";
 import job from "./lib/cron.js";
@@ -50,6 +52,8 @@ if (fs.existsSync(publicDir)) {
     res.sendFile(path.join(publicDir, "index.html"), (err) => next(err));
   });
 }
+
+app.use(errorHandler);
 
 server.listen(PORT, () => {
   connectDB();

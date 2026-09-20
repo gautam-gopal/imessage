@@ -10,7 +10,9 @@ export const upload = multer({
     const isVideo = file.mimetype.startsWith("video/");
 
     if (!isImage && !isVideo) {
-      cb(new Error("Only image and video uploads are allowed"));
+      const err = new Error("Only image and video uploads are allowed");
+      err.statusCode = 415; // Unsupported Media Type
+      cb(err);
       return;
     }
 
