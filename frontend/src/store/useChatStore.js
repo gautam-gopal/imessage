@@ -29,7 +29,8 @@ export const useChatStore = create(
           set((state) => ({
             users: res.data,
             selectedUser:
-              state.selectedUser && res.data.some((user) => user._id === state.selectedUser._id)
+              state.selectedUser &&
+              res.data.some((user) => user._id === state.selectedUser._id)
                 ? state.selectedUser
                 : null,
           }));
@@ -59,23 +60,33 @@ export const useChatStore = create(
           const res = await axiosInstance.get(`/messages/${userId}`);
           set({ messages: res.data });
         } catch (error) {
-          toast.error(error.response?.data?.message || "Failed to load messages");
+          toast.error(
+            error.response?.data?.message || "Failed to load messages",
+          );
         } finally {
           set({ isMessagesLoading: false });
         }
       },
 
       sendMessage: async (messageData) => {
-        const { selectedUser, messages } = get();
+        const { selectedUser } = get();
         if (!selectedUser) return false;
 
         try {
-          const res = await axiosInstance.post(`/messages/send/${selectedUser._id}`, messageData);
-          set({ messages: [...messages, res.data], composerText: "" });
+          const res = await axiosInstance.post(
+            `/messages/send/${selectedUser._id}`,
+            messageData,
+          );
+          set((state) => ({
+            messages: [...state.messages, res.data],
+            composerText: "",
+          }));
           get().getConversations();
           return true;
         } catch (error) {
-          toast.error(error.response?.data?.message || "Failed to send message");
+          toast.error(
+            error.response?.data?.message || "Failed to send message",
+          );
           return false;
         }
       },
@@ -91,7 +102,9 @@ export const useChatStore = create(
           // if im not the receiver don't do anything just return
           if (String(newMessage.senderId) !== String(userId)) return;
 
-          set({ messages: [...get().messages, newMessage] });
+          set((state) => ({
+            messages: [...state.messages, newMessage],
+          }));
 
           get().getConversations();
         });
@@ -109,7 +122,9 @@ export const useChatStore = create(
           activeConversationId,
           selectedUser:
             state.users.find((user) => user._id === activeConversationId) ||
-            state.conversations.find((user) => user._id === activeConversationId) ||
+            state.conversations.find(
+              (user) => user._id === activeConversationId,
+            ) ||
             null,
           messages: activeConversationId ? state.messages : [],
         }));
