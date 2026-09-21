@@ -8,6 +8,7 @@ import {
 import { protectRoute } from "../middleware/auth.middleware.js";
 import { upload } from "../middleware/upload.middleware.js";
 import { validate } from "../middleware/validate.middleware.js";
+import { verifyFileType } from "../middleware/file-type.middleware.js";
 import {
   requireReceiverExists,
   requireTextOrFile,
@@ -30,6 +31,7 @@ router.post(
   validate(sendMessageParamsSchema, "params"),
   requireReceiverExists,
   upload.single("media"),
+  verifyFileType,
   requireTextOrFile,
   validate(sendMessageBodySchema, "body"),
   sendMessage,
