@@ -1,5 +1,11 @@
+import mongoose from "mongoose";
+import {
+  findDirectConversation,
+  resolveOrCreateDirectConversation,
+} from "../lib/conversations.js";
 import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
+import Conversation from "../models/conversation.model.js";
 import { hasImageKitConfig, uploadChatMedia } from "../lib/imagekit.js";
 import { getReceiverSocketId, io } from "../lib/socket.js";
 
@@ -22,45 +28,34 @@ export async function getConversationsForSidebar(req, res) {
   try {
     const loggedInUserId = req.user._id;
 
-    const conversations = await Message.aggregate([
-      // 1. Keep only the messages I sent or received.
-      {
-        $match: {
-          $or: [{ senderId: loggedInUserId }, { receiverId: loggedInUserId }],
-        },
-      },
-      // 2. Collapse them into one row per chat partner, noting our latest message time.
-      {
-        $group: {
-          // The partner is the other person on the message (not me).
-          _id: {
-            $cond: [
-              { $eq: ["$senderId", loggedInUserId] },
-              "$receiverId",
-              "$senderId",
-            ],
-          },
-          lastMessageAt: { $max: "$createdAt" },
-        },
-      },
-      // 3. Put the most recent conversation at the top.
-      { $sort: { lastMessageAt: -1 } },
-      // 4. Look up each partner's user profile (comes back as an array).
-      {
-        $lookup: {
-          from: "users",
-          localField: "_id",
-          foreignField: "_id",
-          as: "user",
-        },
-      },
-      // 5. Pull that profile out of the array and make it the document.
-      { $replaceRoot: { newRoot: { $first: "$user" } } },
-      // 6. Hide the private clerkId field from the result.
-      { $project: { clerkId: 0 } },
-    ]);
+    const conversations = await Conversation.find({
+      type: "direct",
+      participants: loggedInUserId,
+    })
+      .sort({ lastMessageAt: -1 })
+      .lean();
 
-    res.status(200).json(conversations);
+    const otherIds = conversations.map((c) =>
+      c.participants.find((p) => String(p) !== String(loggedInUserId)),
+    );
+
+    const users = await User.find({ _id: { $in: otherIds } })
+      .select("-clerkId")
+      .lean();
+
+    const userById = new Map(users.map((u) => [String(u._id), u]));
+
+    const result = conversations
+      .map((c) => {
+        const otherId = c.participants.find(
+          (p) => String(p) !== String(loggedInUserId),
+        );
+
+        return userById.get(String(otherId));
+      })
+      .filter(Boolean);
+
+    res.json(result);
   } catch (error) {
     console.error("Error in getConversationsForSidebar:", error.message);
     res.status(500).json({ message: "Internal server error" });
@@ -72,14 +67,27 @@ export async function getMessages(req, res) {
     const { id: userToChatId } = req.params;
     const myId = req.user._id;
 
+    new mongoose.Types.ObjectId(userToChatId);
+
+    const conversation = await findDirectConversation(myId, userToChatId);
+
+    if (!conversation) {
+      return res.json([]);
+    }
+
+    const isParticipant = conversation.participants.some(
+      (p) => String(p) === String(myId),
+    );
+
+    if (!isParticipant) {
+      return res.json([]);
+    }
+
     const messages = await Message.find({
-      $or: [
-        { senderId: myId, receiverId: userToChatId },
-        { senderId: userToChatId, receiverId: myId },
-      ],
+      conversationId: conversation._id,
     }).sort({ createdAt: 1 });
 
-    res.status(200).json(messages);
+    res.json(messages);
   } catch (error) {
     console.error("Error in getMessages:", error.message);
     res.status(500).json({ message: "Internal server error" });
@@ -107,15 +115,26 @@ export async function sendMessage(req, res) {
       else imageUrl = url;
     }
 
+    const conversation = await resolveOrCreateDirectConversation(
+      senderId,
+      receiverId,
+    );
+
     const newMessage = new Message({
       senderId,
       receiverId,
+      conversationId: conversation._id,
       text,
       image: imageUrl,
       video: videoUrl,
     });
 
     await newMessage.save();
+
+    await Conversation.updateOne(
+      { _id: conversation._id },
+      { $max: { lastMessageAt: newMessage.createdAt } },
+    );
 
     const receiverSocketId = getReceiverSocketId(receiverId);
     // only send the message in realtime if user is online

@@ -2,7 +2,10 @@ import User from "../models/user.model.js";
 
 export async function requireReceiverExists(req, res, next) {
   try {
-    const exists = await User.exists({ _id: req.params.id });
+    const exists = await User.exists({
+      _id: req.params.id,
+      isSystemUser: { $ne: true },
+    });
 
     if (!exists) {
       const err = new Error("Receiver not found");

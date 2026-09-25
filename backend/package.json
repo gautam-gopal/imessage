@@ -7,7 +7,8 @@
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
     "db:seed:users": "node src/seeds/user.seed.js",
-    "db:seed:messages": "node src/seeds/message.seed.js"
+    "db:seed:messages": "node src/seeds/message.seed.js",
+    "db:migrate:conversations": "node src/migrations/001-conversation-backfill.js"
   },
   "keywords": [],
   "author": "",
