@@ -47,7 +47,12 @@ export function useSelectedConversation() {
   );
   const conversations = useChatStore((state) => state.conversations);
   const users = useChatStore((state) => state.users);
-  const messages = useChatStore((state) => state.messages);
+  const conversationIdByPeerId = useChatStore(
+    (state) => state.conversationIdByPeerId,
+  );
+  const messagesByConversationId = useChatStore(
+    (state) => state.messagesByConversationId,
+  );
 
   const authUser = useAuthStore((state) => state.authUser);
   const onlineUsers = useAuthStore((state) => state.onlineUsers);
@@ -58,6 +63,14 @@ export function useSelectedConversation() {
     ? users.find((user) => user._id === activeConversationId) ||
       conversations.find((user) => user._id === activeConversationId)
     : null;
+
+  const resolvedConversationId = activeConversationId
+    ? conversationIdByPeerId[activeConversationId]
+    : null;
+
+  const messages = resolvedConversationId
+    ? messagesByConversationId[resolvedConversationId] || []
+    : [];
 
   const activeConversation = selectedUser
     ? mapUserToConversation({

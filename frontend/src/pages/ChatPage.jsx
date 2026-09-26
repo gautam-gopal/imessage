@@ -28,20 +28,19 @@ function ChatPage() {
     getConversations();
   }, [getConversations, getUsers]);
 
+  // Subscribed once, independent of which conversation is selected — Stage
+  // 2's room-based delivery sends "newMessage" for every conversation this
+  // user is a member of, not just the currently open one.
+  useEffect(() => {
+    subscribeToMessages();
+    return () => unsubscribeFromMessages();
+  }, [subscribeToMessages, unsubscribeFromMessages]);
+
   useEffect(() => {
     if (!activeConversationId) return;
 
     getMessages(activeConversationId);
-    subscribeToMessages(activeConversationId);
-
-    // cleanup
-    return () => unsubscribeFromMessages();
-  }, [
-    getMessages,
-    activeConversationId,
-    subscribeToMessages,
-    unsubscribeFromMessages,
-  ]);
+  }, [getMessages, activeConversationId]);
 
   return (
     <div
