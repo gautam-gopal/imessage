@@ -7,7 +7,7 @@ import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
 import Conversation from "../models/conversation.model.js";
 import { hasImageKitConfig, uploadChatMedia } from "../lib/imagekit.js";
-import { getReceiverSocketId, io } from "../lib/socket.js";
+import { io, joinConversationRoom } from "../lib/socket.js";
 
 export async function getUsersForSidebar(req, res) {
   try {
@@ -120,6 +120,8 @@ export async function sendMessage(req, res) {
       receiverId,
     );
 
+    joinConversationRoom(conversation);
+
     const newMessage = new Message({
       senderId,
       receiverId,
@@ -136,11 +138,7 @@ export async function sendMessage(req, res) {
       { $max: { lastMessageAt: newMessage.createdAt } },
     );
 
-    const receiverSocketId = getReceiverSocketId(receiverId);
-    // only send the message in realtime if user is online
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("newMessage", newMessage);
-    }
+    io.to(String(conversation._id)).emit("newMessage", newMessage);
 
     res.status(201).json(newMessage);
   } catch (error) {

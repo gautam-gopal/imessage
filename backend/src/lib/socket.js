@@ -3,6 +3,7 @@ import http from "http";
 import { Server } from "socket.io";
 import { verifyToken } from "@clerk/backend";
 import User from "../models/user.model.js";
+import Conversation from "../models/conversation.model.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -11,12 +12,26 @@ const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:5173";
 
 const io = new Server(server, { cors: { origin: [allowedOrigin] } });
 
-function getReceiverSocketId(userId) {
-  return userSocketMap[userId];
-}
-
-// online users map = { userId: socketId }
+// online users map = { userId: Set<socketId> }
 const userSocketMap = {};
+
+// Joins every currently-connected socket of a conversation's participants
+// to that conversation's room. Both the room id and participant list come
+// from the same server-side Conversation document.
+export function joinConversationRoom(conversation) {
+  if (!conversation?._id || !Array.isArray(conversation.participants)) return;
+
+  const room = String(conversation._id);
+
+  for (const participantId of conversation.participants) {
+    const sockets = userSocketMap[String(participantId)];
+    if (!sockets) continue;
+
+    for (const socketId of sockets) {
+      io.in(socketId).socketsJoin(room);
+    }
+  }
+}
 
 io.use(async (socket, next) => {
   try {
@@ -39,14 +54,55 @@ io.use(async (socket, next) => {
 
 io.on("connection", (socket) => {
   const userId = socket.userId;
+  if (!userId) return;
 
-  if (userId) userSocketMap[userId] = socket.id;
-  io.emit("getOnlineUsers", Object.keys(userSocketMap));
+  let sockets = userSocketMap[userId];
+
+  if (!sockets) {
+    sockets = new Set();
+    userSocketMap[userId] = sockets;
+  }
+
+  const wasOffline = sockets.size === 0;
+
+  sockets.add(socket.id);
+
+  if (wasOffline) {
+    io.emit("getOnlineUsers", Object.keys(userSocketMap));
+  }
 
   socket.on("disconnect", () => {
-    if (userId) delete userSocketMap[userId];
-    io.emit("getOnlineUsers", Object.keys(userSocketMap));
+    const currentSockets = userSocketMap[userId];
+    if (!currentSockets) return;
+
+    currentSockets.delete(socket.id);
+
+    if (currentSockets.size === 0) {
+      delete userSocketMap[userId];
+
+      io.emit("getOnlineUsers", Object.keys(userSocketMap));
+
+      User.updateOne(
+        { _id: userId },
+        { $set: { lastSeenAt: new Date() } },
+      ).catch((error) => {
+        console.error("Error updating lastSeenAt:", error.message);
+      });
+    }
   });
+
+  // Join every conversation this authenticated user is actually a
+  // participant of. The user ID comes from the verified Clerk identity.
+  Conversation.find({ participants: userId }, { _id: 1 })
+    .lean()
+    .then((conversations) => {
+      for (const conversation of conversations) {
+        socket.join(String(conversation._id));
+      }
+    })
+    .catch((error) => {
+      console.error("Error joining conversation rooms:", error.message);
+    });
 });
 
-export { app, server, io, getReceiverSocketId };
+export { app, server, io };
