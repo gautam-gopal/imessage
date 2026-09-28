@@ -10,7 +10,13 @@ export function validate(schema, source = "body") {
       return next(err);
     }
 
-    req[source] = result.data;
+    // Express 5: req.query is a getter-only property, so it cannot be
+    // reassigned. Parsed query data is exposed on req.validatedQuery.
+    if (source === "query") {
+      req.validatedQuery = result.data;
+    } else {
+      req[source] = result.data;
+    }
     next();
   };
 }

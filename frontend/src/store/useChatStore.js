@@ -84,40 +84,42 @@ function normalizeConversation(raw) {
   };
 }
 
+// Decides which endpoint a given real Conversation _id talks to.
+//   group  -> conversation-addressed routes
+//   direct -> existing peer-addressed routes (peer resolved from the
+//              conversation list, falling back to the transitional
+//              peer -> conversation bridge)
+// Used both for the currently active selection (resolveConversationTarget)
+// and for a conversationId supplied explicitly (loadOlderMessages), so an
+// older-page request always targets the conversation it was issued for,
+// independent of whatever is selected by the time the response arrives.
+function resolveTargetByConversationId(state, conversationId) {
+  if (!conversationId) return null;
+
+  const { conversations, conversationIdByPeerId } = state;
+  const conversation = conversations.find((item) => item.id === conversationId);
+
+  if (conversation?.type === "group") {
+    return { kind: "group", conversationId };
+  }
+
+  const peerId =
+    conversation?.peerId ??
+    Object.keys(conversationIdByPeerId).find(
+      (id) => conversationIdByPeerId[id] === conversationId,
+    );
+
+  return peerId ? { kind: "direct", peerId, conversationId } : null;
+}
+
 // Decides which endpoint the current selection talks to.
-//   group  -> conversation-addressed routes (real Conversation _id)
-//   direct -> existing peer-addressed routes
 // A group is only ever recognised from the conversation list's own `type`;
 // it is never inferred from a peer id.
 function resolveConversationTarget(state) {
-  const {
-    activeConversationId,
-    pendingDirectPeerId,
-    conversations,
-    conversationIdByPeerId,
-  } = state;
+  const { activeConversationId, pendingDirectPeerId } = state;
 
   if (activeConversationId) {
-    const conversation = conversations.find(
-      (item) => item.id === activeConversationId,
-    );
-
-    if (conversation?.type === "group") {
-      return { kind: "group", conversationId: activeConversationId };
-    }
-
-    // Direct: prefer the list entry, fall back to the transitional
-    // peer -> conversation bridge (e.g. a conversation created a moment ago
-    // that the sidebar list hasn't refreshed for yet).
-    const peerId =
-      conversation?.peerId ??
-      Object.keys(conversationIdByPeerId).find(
-        (id) => conversationIdByPeerId[id] === activeConversationId,
-      );
-
-    return peerId
-      ? { kind: "direct", peerId, conversationId: activeConversationId }
-      : null;
+    return resolveTargetByConversationId(state, activeConversationId);
   }
 
   if (pendingDirectPeerId) {
@@ -150,6 +152,7 @@ export const useChatStore = create(
       users: [],
       conversations: [],
       messagesByConversationId: {},
+      historyByConversationId: {},
       // Transitional adapter: direct peer id -> direct Conversation _id.
       // Populated only from direct conversations / messages that carry a
       // receiverId. Group conversations never touch it.
@@ -438,9 +441,16 @@ export const useChatStore = create(
         }
       },
 
-      // Loads history for the current selection: group -> conversation-
-      // addressed route, direct (existing or pending) -> peer-addressed
-      // route. A pending peer with no Conversation simply gets [].
+      // Loads the newest page of history for the current selection:
+      // group -> conversation-addressed route, direct (existing or
+      // pending) -> peer-addressed route. A pending peer with no
+      // Conversation gets the empty-page shape from the backend. Always
+      // fetches the newest page (no `before`) and resets that
+      // conversation's pagination meta from the response — any
+      // previously-paged-back older messages already in the bucket are
+      // kept (ingestMessages merges, never truncates), they just aren't
+      // reflected in the fresh hasMore/nextCursor until loadOlderMessages
+      // walks back through them again.
       getMessages: async () => {
         const target = resolveConversationTarget(get());
         if (!target) return;
@@ -453,13 +463,134 @@ export const useChatStore = create(
         set({ isMessagesLoading: true });
         try {
           const res = await axiosInstance.get(url);
-          get().ingestMessages(res.data);
+          const { messages, pageInfo } = res.data;
+          get().ingestMessages(messages);
+
+          if (target.conversationId) {
+            const key = String(target.conversationId);
+            set((state) => ({
+              historyByConversationId: {
+                ...state.historyByConversationId,
+                [key]: {
+                  limit: pageInfo.limit,
+                  hasMore: pageInfo.hasMore,
+                  nextCursor: pageInfo.nextCursor,
+                  isLoadingOlder: false,
+                },
+              },
+            }));
+          }
         } catch (error) {
           toast.error(
             error.response?.data?.message || "Failed to load messages",
           );
         } finally {
           set({ isMessagesLoading: false });
+        }
+      },
+
+      // Loads the next older page for conversationId (a real Conversation
+      // _id — call only once the first page has loaded, per the semantics
+      // above). Independent of the current selection: builds its own
+      // target from conversationId rather than resolveConversationTarget,
+      // so a response that arrives after the user has switched to another
+      // conversation still applies to the conversation it was requested
+      // for, not whatever is active by then. Serialized per conversation
+      // via isLoadingOlder; a second call while one is already in flight
+      // for the same conversation is a no-op. Resolves
+      // { ok: true, addedCount } | { ok: false, error }; never throws.
+      loadOlderMessages: async (conversationId) => {
+        const key = conversationId ? String(conversationId) : null;
+        if (!key) return { ok: false, error: "No conversation" };
+
+        const meta = get().historyByConversationId[key];
+
+        if (!meta) {
+          return { ok: false, error: "History not loaded yet" };
+        }
+        if (meta.isLoadingOlder) {
+          return { ok: false, error: "Already loading" };
+        }
+        if (!meta.hasMore || !meta.nextCursor) {
+          return { ok: false, error: "No more history" };
+        }
+
+        const target = resolveTargetByConversationId(get(), key);
+        if (!target) return { ok: false, error: "Conversation not found" };
+
+        const requestCursor = meta.nextCursor;
+        const limit = meta.limit;
+
+        set((state) => ({
+          historyByConversationId: {
+            ...state.historyByConversationId,
+            [key]: {
+              ...state.historyByConversationId[key],
+              isLoadingOlder: true,
+            },
+          },
+        }));
+
+        const url =
+          target.kind === "group"
+            ? `/conversations/${target.conversationId}/messages`
+            : `/messages/${target.peerId}`;
+
+        try {
+          const res = await axiosInstance.get(url, {
+            params: { before: requestCursor, limit },
+          });
+          const { messages, pageInfo } = res.data;
+
+          const { addedCount } = get().ingestMessages(messages);
+
+          set((state) => {
+            const currentMeta = state.historyByConversationId[key];
+            if (!currentMeta) return state;
+
+            // Someone else (a fresh getMessages first-load, most likely)
+            // already advanced this conversation's cursor past our
+            // starting point while this request was in flight — apply the
+            // messages (safe, ingestMessages dedupes by _id) but don't let
+            // this stale response overwrite newer pagination state with
+            // older data. Still clear our own isLoadingOlder flag.
+            if (currentMeta.nextCursor !== requestCursor) {
+              return {
+                historyByConversationId: {
+                  ...state.historyByConversationId,
+                  [key]: { ...currentMeta, isLoadingOlder: false },
+                },
+              };
+            }
+
+            return {
+              historyByConversationId: {
+                ...state.historyByConversationId,
+                [key]: {
+                  limit: pageInfo.limit,
+                  hasMore: pageInfo.hasMore,
+                  nextCursor: pageInfo.nextCursor,
+                  isLoadingOlder: false,
+                },
+              },
+            };
+          });
+
+          return { ok: true, addedCount };
+        } catch (error) {
+          set((state) => ({
+            historyByConversationId: {
+              ...state.historyByConversationId,
+              [key]: {
+                ...state.historyByConversationId[key],
+                isLoadingOlder: false,
+              },
+            },
+          }));
+          toast.error(
+            error.response?.data?.message || "Failed to load older messages",
+          );
+          return { ok: false, error: "request failed" };
         }
       },
 

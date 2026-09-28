@@ -14,6 +14,7 @@ import {
   leaveConversationRoom,
 } from "../lib/socket.js";
 import { markMessagesReadUpTo } from "../lib/read-receipts.js";
+import { getMessagePage } from "../lib/message-history.js";
 
 export async function createGroup(req, res, next) {
   try {
@@ -244,12 +245,15 @@ export async function sendConversationMessage(req, res, next) {
 export async function getConversationMessages(req, res, next) {
   try {
     const { conversation } = req;
+    const { before, limit } = req.validatedQuery;
 
-    const messages = await Message.find({
+    const page = await getMessagePage({
       conversationId: conversation._id,
-    }).sort({ createdAt: 1 });
+      before,
+      limit,
+    });
 
-    res.json(messages);
+    res.json(page);
   } catch (error) {
     next(error);
   }

@@ -16,6 +16,7 @@ import {
 import {
   sendMessageBodySchema,
   sendMessageParamsSchema,
+  messageHistoryQuerySchema,
 } from "../lib/validators/message.validators.js";
 
 const router = express.Router();
@@ -24,7 +25,12 @@ router.use(protectRoute);
 
 router.get("/users", getUsersForSidebar);
 router.get("/conversations", getConversationsForSidebar);
-router.get("/:id", getMessages);
+router.get(
+  "/:id",
+  validate(sendMessageParamsSchema, "params"),
+  validate(messageHistoryQuerySchema, "query"),
+  getMessages,
+);
 
 router.post(
   "/send/:id",

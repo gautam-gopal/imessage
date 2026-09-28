@@ -8,6 +8,7 @@ import Message from "../models/message.model.js";
 import Conversation from "../models/conversation.model.js";
 import { hasImageKitConfig, uploadChatMedia } from "../lib/imagekit.js";
 import { io, joinConversationRoom } from "../lib/socket.js";
+import { getMessagePage, emptyMessagePage } from "../lib/message-history.js";
 
 export async function getUsersForSidebar(req, res) {
   try {
@@ -91,6 +92,7 @@ export async function getConversationsForSidebar(req, res) {
 export async function getMessages(req, res) {
   try {
     const { id: userToChatId } = req.params;
+    const { before, limit } = req.validatedQuery;
     const myId = req.user._id;
 
     new mongoose.Types.ObjectId(userToChatId);
@@ -98,7 +100,7 @@ export async function getMessages(req, res) {
     const conversation = await findDirectConversation(myId, userToChatId);
 
     if (!conversation) {
-      return res.json([]);
+      return res.json(emptyMessagePage(limit));
     }
 
     const isParticipant = conversation.participants.some(
@@ -106,14 +108,16 @@ export async function getMessages(req, res) {
     );
 
     if (!isParticipant) {
-      return res.json([]);
+      return res.json(emptyMessagePage(limit));
     }
 
-    const messages = await Message.find({
+    const page = await getMessagePage({
       conversationId: conversation._id,
-    }).sort({ createdAt: 1 });
+      before,
+      limit,
+    });
 
-    res.json(messages);
+    res.json(page);
   } catch (error) {
     console.error("Error in getMessages:", error.message);
     res.status(500).json({ message: "Internal server error" });

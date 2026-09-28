@@ -24,7 +24,10 @@ import {
   addMemberBodySchema,
   markReadBodySchema,
 } from "../lib/validators/conversation.validators.js";
-import { sendMessageBodySchema } from "../lib/validators/message.validators.js";
+import {
+  sendMessageBodySchema,
+  messageHistoryQuerySchema,
+} from "../lib/validators/message.validators.js";
 
 const router = express.Router();
 
@@ -68,6 +71,7 @@ router.post(
 router.get(
   "/:conversationId/messages",
   validate(conversationIdParamsSchema, "params"),
+  validate(messageHistoryQuerySchema, "query"),
   requireConversationMembership,
   requireGroupConversation,
   getConversationMessages,
