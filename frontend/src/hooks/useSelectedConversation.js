@@ -12,24 +12,28 @@ export function getInitials(name) {
     .join("");
 }
 
-// mapUserToConversation is an adapter — it converts the raw backend shapes (a user document + an array of message documents) into the clean view-model that the chat UI components expect to render.
-
-// Two transformations happen:
-// 1. Messages → UI messages
-// 2. User → peer
-
-function mapUserToConversation({ user, messages, authUser, onlineUsers }) {
-  const mappedMessages = messages.map((message) => ({
+// Adapter from raw backend message documents to the UI message view-model.
+// senderId is carried through so group UI can attribute messages later.
+function mapMessages(messages, authUser) {
+  return messages.map((message) => ({
     id: message._id,
+    senderId: String(message.senderId),
     role: String(message.senderId) === String(authUser?._id) ? "me" : "them",
     text: message.text || "",
     time: formatMessageTime(message.createdAt),
     imageUrl: message.image,
     videoUrl: message.video,
   }));
+}
 
+// View-model for a direct chat. `id` is the real Conversation _id, or null
+// for a pending direct chat that has no Conversation yet.
+function mapDirectView({ id, user, messages, authUser, onlineUsers }) {
   return {
-    id: user._id,
+    id,
+    type: "direct",
+    peerId: user._id,
+    memberCount: null,
     peer: {
       name: user.fullName,
       subtitle: user.email,
@@ -37,13 +41,37 @@ function mapUserToConversation({ user, messages, authUser, onlineUsers }) {
       avatarUrl: user.profilePic,
       initials: getInitials(user.fullName),
     },
-    messages: mappedMessages,
+    messages: mapMessages(messages, authUser),
+  };
+}
+
+// View-model for a group chat. `peer` carries the group's display
+// name/avatar so existing header code keeps rendering; there is no human
+// presence for a group (isOnline is always false — Part 4 must branch on
+// `type` instead of showing a presence indicator).
+function mapGroupView({ conversation, messages, authUser }) {
+  return {
+    id: conversation.id,
+    type: "group",
+    peerId: null,
+    memberCount: conversation.participantCount,
+    peer: {
+      name: conversation.name,
+      subtitle: `${conversation.participantCount} members`,
+      isOnline: false,
+      avatarUrl: conversation.avatarUrl,
+      initials: getInitials(conversation.name),
+    },
+    messages: mapMessages(messages, authUser),
   };
 }
 
 export function useSelectedConversation() {
   const activeConversationId = useChatStore(
     (state) => state.activeConversationId,
+  );
+  const pendingDirectPeerId = useChatStore(
+    (state) => state.pendingDirectPeerId,
   );
   const conversations = useChatStore((state) => state.conversations);
   const users = useChatStore((state) => state.users);
@@ -59,31 +87,64 @@ export function useSelectedConversation() {
 
   const isLargeScreen = useMediaQuery("(min-width: 1024px)");
 
-  const selectedUser = activeConversationId
-    ? users.find((user) => user._id === activeConversationId) ||
-      conversations.find((user) => user._id === activeConversationId)
-    : null;
+  let activeConversation = null;
+  let activePeerId = null;
 
-  const resolvedConversationId = activeConversationId
-    ? conversationIdByPeerId[activeConversationId]
-    : null;
+  if (activeConversationId) {
+    const messages = messagesByConversationId[activeConversationId] || [];
+    const conversation = conversations.find(
+      (item) => item.id === activeConversationId,
+    );
 
-  const messages = resolvedConversationId
-    ? messagesByConversationId[resolvedConversationId] || []
-    : [];
+    if (conversation?.type === "group") {
+      activeConversation = mapGroupView({ conversation, messages, authUser });
+    } else {
+      // Direct: the list entry knows the peer; if the list hasn't caught up
+      // yet, fall back to the transitional peer -> conversation bridge.
+      const peerId =
+        conversation?.peerId ??
+        Object.keys(conversationIdByPeerId).find(
+          (id) => conversationIdByPeerId[id] === activeConversationId,
+        );
 
-  const activeConversation = selectedUser
-    ? mapUserToConversation({
-        user: selectedUser,
-        messages,
+      const user =
+        conversation?.peer || users.find((item) => item._id === peerId);
+
+      if (user) {
+        activePeerId = String(user._id);
+        activeConversation = mapDirectView({
+          id: activeConversationId,
+          user,
+          messages,
+          authUser,
+          onlineUsers,
+        });
+      }
+    }
+  } else if (pendingDirectPeerId) {
+    const user = users.find((item) => item._id === pendingDirectPeerId);
+
+    if (user) {
+      activePeerId = String(user._id);
+      activeConversation = mapDirectView({
+        id: null,
+        user,
+        messages: [],
         authUser,
         onlineUsers,
-      })
-    : null;
+      });
+    }
+  }
 
   return {
     activeConversation,
+    // Real Conversation _id, or null (nothing selected / pending direct).
     activeConversationId,
+    pendingDirectPeerId,
+    // Peer of the selected direct chat (existing or pending), else null.
+    activePeerId,
+    // True whenever something is selected, including a pending direct chat.
+    hasSelection: Boolean(activeConversationId || pendingDirectPeerId),
     isLargeScreen,
   };
 }

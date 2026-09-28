@@ -20,13 +20,26 @@ function ChatPage() {
     (state) => state.unsubscribeFromMessages,
   );
 
-  const { activeConversation, activeConversationId, isLargeScreen } =
-    useSelectedConversation();
+  const {
+    activeConversation,
+    activeConversationId,
+    pendingDirectPeerId,
+    hasSelection,
+    isLargeScreen,
+  } = useSelectedConversation();
 
   useEffect(() => {
     getUsers();
     getConversations();
-  }, [getConversations, getUsers]);
+  }, [getUsers, getConversations]);
+
+  // Loads history for the current selection (existing direct, group, or a
+  // pending direct peer). The store resolves the right endpoint itself.
+  useEffect(() => {
+    if (!activeConversationId && !pendingDirectPeerId) return;
+
+    getMessages();
+  }, [getMessages, activeConversationId, pendingDirectPeerId]);
 
   // Subscribed once, independent of which conversation is selected — Stage
   // 2's room-based delivery sends "newMessage" for every conversation this
@@ -35,12 +48,6 @@ function ChatPage() {
     subscribeToMessages();
     return () => unsubscribeFromMessages();
   }, [subscribeToMessages, unsubscribeFromMessages]);
-
-  useEffect(() => {
-    if (!activeConversationId) return;
-
-    getMessages(activeConversationId);
-  }, [getMessages, activeConversationId]);
 
   return (
     <div
@@ -52,7 +59,7 @@ function ChatPage() {
 
         <div
           className={`flex-1 flex-col overflow-hidden ${
-            !isLargeScreen && !activeConversationId ? "hidden lg:flex" : "flex"
+            !isLargeScreen && !hasSelection ? "hidden lg:flex" : "flex"
           }`}
         >
           <ChatHeader />

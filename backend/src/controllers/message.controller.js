@@ -29,29 +29,55 @@ export async function getConversationsForSidebar(req, res) {
     const loggedInUserId = req.user._id;
 
     const conversations = await Conversation.find({
-      type: "direct",
       participants: loggedInUserId,
     })
       .sort({ lastMessageAt: -1 })
       .lean();
 
-    const otherIds = conversations.map((c) =>
+    const directConversations = conversations.filter(
+      (c) => c.type === "direct",
+    );
+
+    const peerIds = directConversations.map((c) =>
       c.participants.find((p) => String(p) !== String(loggedInUserId)),
     );
 
-    const users = await User.find({ _id: { $in: otherIds } })
+    const peers = await User.find({ _id: { $in: peerIds } })
       .select("-clerkId")
       .lean();
 
-    const userById = new Map(users.map((u) => [String(u._id), u]));
+    const peerById = new Map(peers.map((u) => [String(u._id), u]));
 
     const result = conversations
       .map((c) => {
-        const otherId = c.participants.find(
-          (p) => String(p) !== String(loggedInUserId),
-        );
+        if (c.type === "direct") {
+          const peerId = c.participants.find(
+            (p) => String(p) !== String(loggedInUserId),
+          );
+          const peer = peerById.get(String(peerId));
 
-        return userById.get(String(otherId));
+          // A direct conversation whose peer no longer resolves to a real
+          // user is dropped from the sidebar rather than shown broken.
+          if (!peer) return null;
+
+          return {
+            _id: c._id,
+            type: "direct",
+            peer,
+            lastMessageAt: c.lastMessageAt,
+          };
+        }
+
+        return {
+          _id: c._id,
+          type: "group",
+          name: c.name,
+          avatar: c.avatar ?? null,
+          participantCount: c.participants.length,
+          participants: c.participants,
+          admins: c.admins,
+          lastMessageAt: c.lastMessageAt,
+        };
       })
       .filter(Boolean);
 

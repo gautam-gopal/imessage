@@ -10,18 +10,120 @@ import toast from "react-hot-toast";
 // on the same shared socket for other purposes, present or future.
 let newMessageHandler = null;
 
+// Converts one row of GET /messages/conversations (backend shape:
+// { _id, type, peer } for direct, { _id, type, name, avatar,
+// participantCount, admins } for group) into the single frontend
+// representation used by the store, hook and sidebar.
+function normalizeConversation(raw) {
+  if (raw.type === "group") {
+    return {
+      id: String(raw._id),
+      type: "group",
+      lastMessageAt: raw.lastMessageAt,
+      name: raw.name,
+      avatarUrl: raw.avatar || "",
+      peerId: null,
+      peer: null,
+      participantCount: raw.participantCount ?? 0,
+      participantIds: (raw.participants || []).map(String),
+      admins: (raw.admins || []).map(String),
+    };
+  }
+
+  if (!raw.peer) return null;
+
+  return {
+    id: String(raw._id),
+    type: "direct",
+    lastMessageAt: raw.lastMessageAt,
+    name: raw.peer.fullName,
+    avatarUrl: raw.peer.profilePic,
+    peerId: String(raw.peer._id),
+    peer: raw.peer,
+    participantCount: 2,
+    participantIds: [],
+    admins: [],
+  };
+}
+
+// Decides which endpoint the current selection talks to.
+//   group  -> conversation-addressed routes (real Conversation _id)
+//   direct -> existing peer-addressed routes
+// A group is only ever recognised from the conversation list's own `type`;
+// it is never inferred from a peer id.
+function resolveConversationTarget(state) {
+  const {
+    activeConversationId,
+    pendingDirectPeerId,
+    conversations,
+    conversationIdByPeerId,
+  } = state;
+
+  if (activeConversationId) {
+    const conversation = conversations.find(
+      (item) => item.id === activeConversationId,
+    );
+
+    if (conversation?.type === "group") {
+      return { kind: "group", conversationId: activeConversationId };
+    }
+
+    // Direct: prefer the list entry, fall back to the transitional
+    // peer -> conversation bridge (e.g. a conversation created a moment ago
+    // that the sidebar list hasn't refreshed for yet).
+    const peerId =
+      conversation?.peerId ??
+      Object.keys(conversationIdByPeerId).find(
+        (id) => conversationIdByPeerId[id] === activeConversationId,
+      );
+
+    return peerId
+      ? { kind: "direct", peerId, conversationId: activeConversationId }
+      : null;
+  }
+
+  if (pendingDirectPeerId) {
+    return {
+      kind: "direct",
+      peerId: pendingDirectPeerId,
+      conversationId: null,
+    };
+  }
+
+  return null;
+}
+
+// If the user is sitting on a pending direct chat and a Conversation for
+// that peer now exists (first message sent, peer wrote first, or the list
+// refreshed), promote the selection to the real Conversation _id.
+function promotePendingSelection(state, conversationIdByPeerId) {
+  const resolved = state.pendingDirectPeerId
+    ? conversationIdByPeerId[state.pendingDirectPeerId]
+    : null;
+
+  return resolved
+    ? { activeConversationId: resolved, pendingDirectPeerId: null }
+    : {};
+}
+
 export const useChatStore = create(
   persist(
     (set, get) => ({
       users: [],
       conversations: [],
       messagesByConversationId: {},
+      // Transitional adapter: direct peer id -> direct Conversation _id.
+      // Populated only from direct conversations / messages that carry a
+      // receiverId. Group conversations never touch it.
       conversationIdByPeerId: {},
-      selectedUser: null,
       isConversationsLoading: false,
       isUsersLoading: false,
       isMessagesLoading: false,
+      // Always a real Conversation _id (direct or group), or null.
       activeConversationId: null,
+      // A selected direct peer who has no Conversation yet. Mutually
+      // exclusive with activeConversationId.
+      pendingDirectPeerId: null,
       searchQuery: "",
       sidebarTab: "chats",
       composerText: "",
@@ -34,10 +136,10 @@ export const useChatStore = create(
           const res = await axiosInstance.get("/messages/users");
           set((state) => ({
             users: res.data,
-            selectedUser:
-              state.selectedUser &&
-              res.data.some((user) => user._id === state.selectedUser._id)
-                ? state.selectedUser
+            pendingDirectPeerId:
+              state.pendingDirectPeerId &&
+              res.data.some((user) => user._id === state.pendingDirectPeerId)
+                ? state.pendingDirectPeerId
                 : null,
           }));
         } catch (error) {
@@ -51,7 +153,44 @@ export const useChatStore = create(
         set({ isConversationsLoading: true });
         try {
           const res = await axiosInstance.get("/messages/conversations");
-          set({ conversations: res.data });
+          const conversations = res.data
+            .map(normalizeConversation)
+            .filter(Boolean);
+
+          set((state) => {
+            const directIdsByPeerId = {};
+            for (const conversation of conversations) {
+              if (conversation.type === "direct") {
+                directIdsByPeerId[conversation.peerId] = conversation.id;
+              }
+            }
+
+            const nextMap = {
+              ...state.conversationIdByPeerId,
+              ...directIdsByPeerId,
+            };
+
+            // A group the user was viewing that no longer appears in the
+            // refreshed list (removed from it, or left it) is deselected.
+            const lostActiveGroup =
+              state.activeConversationId &&
+              state.conversations.some(
+                (conversation) =>
+                  conversation.id === state.activeConversationId &&
+                  conversation.type === "group",
+              ) &&
+              !conversations.some(
+                (conversation) =>
+                  conversation.id === state.activeConversationId,
+              );
+
+            return {
+              conversations,
+              conversationIdByPeerId: nextMap,
+              ...promotePendingSelection(state, nextMap),
+              ...(lostActiveGroup ? { activeConversationId: null } : {}),
+            };
+          });
         } catch (error) {
           console.log("Error in getConversations", error.message);
         } finally {
@@ -111,35 +250,58 @@ export const useChatStore = create(
             return aId < bId ? -1 : aId > bId ? 1 : 0;
           });
 
-          const peerId = messagesForConversation
-            .map((message) => {
-              const senderId = String(message.senderId);
-              const receiverId = message.receiverId
-                ? String(message.receiverId)
-                : null;
-              return senderId === myId ? receiverId : senderId;
-            })
-            .find(Boolean);
+          // Peer bridge: direct messages only. A group message has no
+          // receiverId, so it can never yield a peer mapping; a conversation
+          // already known to be a group is skipped as a second guard.
+          const isKnownGroup = state.conversations.some(
+            (conversation) =>
+              conversation.id === conversationId &&
+              conversation.type === "group",
+          );
+
+          const peerId = isKnownGroup
+            ? undefined
+            : messagesForConversation
+                .filter((message) => message.receiverId)
+                .map((message) =>
+                  String(message.senderId) === myId
+                    ? String(message.receiverId)
+                    : String(message.senderId),
+                )
+                .find(Boolean);
+
+          const nextMap = peerId
+            ? { ...state.conversationIdByPeerId, [peerId]: conversationId }
+            : state.conversationIdByPeerId;
 
           return {
             messagesByConversationId: {
               ...state.messagesByConversationId,
               [conversationId]: merged,
             },
-            conversationIdByPeerId: peerId
-              ? { ...state.conversationIdByPeerId, [peerId]: conversationId }
-              : state.conversationIdByPeerId,
+            conversationIdByPeerId: nextMap,
+            ...promotePendingSelection(state, nextMap),
           };
         });
 
         return { addedCount };
       },
 
-      getMessages: async (userId) => {
-        if (!userId) return;
+      // Loads history for the current selection: group -> conversation-
+      // addressed route, direct (existing or pending) -> peer-addressed
+      // route. A pending peer with no Conversation simply gets [].
+      getMessages: async () => {
+        const target = resolveConversationTarget(get());
+        if (!target) return;
+
+        const url =
+          target.kind === "group"
+            ? `/conversations/${target.conversationId}/messages`
+            : `/messages/${target.peerId}`;
+
         set({ isMessagesLoading: true });
         try {
-          const res = await axiosInstance.get(`/messages/${userId}`);
+          const res = await axiosInstance.get(url);
           get().ingestMessages(res.data);
         } catch (error) {
           toast.error(
@@ -151,14 +313,16 @@ export const useChatStore = create(
       },
 
       sendMessage: async (messageData) => {
-        const { selectedUser } = get();
-        if (!selectedUser) return false;
+        const target = resolveConversationTarget(get());
+        if (!target) return false;
+
+        const url =
+          target.kind === "group"
+            ? `/conversations/${target.conversationId}/messages`
+            : `/messages/send/${target.peerId}`;
 
         try {
-          const res = await axiosInstance.post(
-            `/messages/send/${selectedUser._id}`,
-            messageData,
-          );
+          const res = await axiosInstance.post(url, messageData);
           const { addedCount } = get().ingestMessages([res.data]);
           set({ composerText: "" });
           if (addedCount > 0) get().getConversations();
@@ -195,18 +359,94 @@ export const useChatStore = create(
         newMessageHandler = null;
       },
 
-      setSelectedUser: (selectedUser) => set({ selectedUser }),
+      // Selects an existing conversation (direct or group) by its real
+      // Conversation _id. Passing null clears the selection entirely,
+      // including any pending direct peer. Cached messages are never
+      // cleared here.
+      setActiveConversationId: (conversationId) =>
+        set({
+          activeConversationId: conversationId ?? null,
+          pendingDirectPeerId: null,
+        }),
 
-      setActiveConversationId: (activeConversationId) => {
-        set((state) => ({
-          activeConversationId,
-          selectedUser:
-            state.users.find((user) => user._id === activeConversationId) ||
-            state.conversations.find(
-              (user) => user._id === activeConversationId,
-            ) ||
-            null,
-        }));
+      // Selects a person (Users tab). If a direct Conversation with them
+      // already exists, that Conversation becomes active; otherwise the
+      // peer is held as pending until the first message creates it.
+      selectDirectPeer: (peerId) => {
+        const existingConversationId = get().conversationIdByPeerId[peerId];
+
+        if (existingConversationId) {
+          set({
+            activeConversationId: existingConversationId,
+            pendingDirectPeerId: null,
+          });
+          return;
+        }
+
+        set({ activeConversationId: null, pendingDirectPeerId: peerId });
+      },
+
+      // Group management. Every action resyncs the conversation list from
+      // the server afterwards (also on failure, e.g. a 409 membership
+      // conflict) so the UI never keeps a stale participant list.
+      createGroup: async ({ name, avatar, participantIds }) => {
+        try {
+          const payload = { name, participantIds };
+          if (avatar) payload.avatar = avatar;
+
+          const res = await axiosInstance.post("/conversations", payload);
+          await get().getConversations();
+          set({ sidebarTab: "chats" });
+          get().setActiveConversationId(String(res.data._id));
+          return true;
+        } catch (error) {
+          toast.error(
+            error.response?.data?.message || "Failed to create group",
+          );
+          return false;
+        }
+      },
+
+      addGroupMember: async (conversationId, memberId) => {
+        try {
+          await axiosInstance.post(`/conversations/${conversationId}/members`, {
+            memberId,
+          });
+          await get().getConversations();
+          return true;
+        } catch (error) {
+          toast.error(error.response?.data?.message || "Failed to add member");
+          await get().getConversations();
+          return false;
+        }
+      },
+
+      // Covers both an admin removing someone and a member leaving
+      // (memberId === the logged-in user).
+      removeGroupMember: async (conversationId, memberId) => {
+        const myId = String(useAuthStore.getState().authUser?._id);
+
+        try {
+          await axiosInstance.delete(
+            `/conversations/${conversationId}/members/${memberId}`,
+          );
+
+          if (
+            String(memberId) === myId &&
+            get().activeConversationId === conversationId
+          ) {
+            get().setActiveConversationId(null);
+          }
+
+          await get().getConversations();
+          return true;
+        } catch (error) {
+          toast.error(
+            error.response?.data?.message || "Failed to update group members",
+          );
+          await get().getConversations();
+          return false;
+        }
       },
 
       setSearchQuery: (searchQuery) => set({ searchQuery }),
@@ -214,15 +454,17 @@ export const useChatStore = create(
       setComposerText: (composerText) => set({ composerText }),
       setSoundEnabled: (isSoundEnabled) => set({ isSoundEnabled }),
 
-      sendTextMessage: async (conversationId) => {
+      // The target is resolved from store selection state, not from the
+      // caller: a pending direct chat has no conversationId yet.
+      sendTextMessage: async () => {
         const messageText = get().composerText.trim();
-        if (!conversationId || !messageText) return false;
+        if (!messageText) return false;
 
         return get().sendMessage({ text: messageText });
       },
 
-      sendMediaMessage: async ({ conversationId, file }) => {
-        if (!conversationId || !file) return false;
+      sendMediaMessage: async ({ file } = {}) => {
+        if (!file) return false;
 
         const formData = new FormData();
         formData.append("media", file);

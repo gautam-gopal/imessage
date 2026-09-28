@@ -10,21 +10,36 @@ import { UserButton } from "@clerk/react";
 import { SearchField, Tabs } from "@heroui/react";
 import { MessageSquareIcon, UsersIcon } from "lucide-react";
 import { ConversationRow } from "./ConversationRow";
+import { CreateGroupModal } from "./CreateGroupModal";
 
 function mapUserForList(user, onlineUsers) {
   return {
-    conversationId: user._id,
     id: user._id,
     name: user.fullName,
     avatarUrl: user.profilePic,
     initials: getInitials(user.fullName),
     isOnline: onlineUsers.includes(user._id),
-    peer: {
-      name: user.fullName,
-      avatarUrl: user.profilePic,
-      initials: getInitials(user.fullName),
-      isOnline: onlineUsers.includes(user._id),
-    },
+  };
+}
+
+// Row data for a normalized conversation (see normalizeConversation in
+// useChatStore). Groups carry type "group" so ConversationRow renders no
+// presence indicator for them.
+function mapConversationForList(conversation, onlineUsers) {
+  return {
+    id: conversation.id,
+    type: conversation.type,
+    subtitle:
+      conversation.type === "group"
+        ? `${conversation.participantCount} members`
+        : undefined,
+    name: conversation.name,
+    avatarUrl: conversation.avatarUrl,
+    initials: getInitials(conversation.name),
+    isOnline:
+      conversation.type === "direct"
+        ? onlineUsers.includes(conversation.peerId)
+        : false,
   };
 }
 
@@ -42,22 +57,25 @@ function ChatSidebar() {
     (state) => state.setActiveConversationId,
   );
 
+  const selectDirectPeer = useChatStore((state) => state.selectDirectPeer);
+
   const onlineUsers = useAuthStore((state) => state.onlineUsers);
 
-  const { activeConversationId, isLargeScreen } = useSelectedConversation();
+  const { activeConversationId, activePeerId, hasSelection, isLargeScreen } =
+    useSelectedConversation();
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
-  const conversationUsers = conversations.map((user) =>
-    mapUserForList(user, onlineUsers),
+  const conversationRows = conversations.map((conversation) =>
+    mapConversationForList(conversation, onlineUsers),
   );
   const allUsers = users.map((user) => mapUserForList(user, onlineUsers));
 
   const filteredConversations = normalizedSearchQuery
-    ? conversationUsers.filter((conversation) =>
-        conversation.peer.name.toLowerCase().includes(normalizedSearchQuery),
+    ? conversationRows.filter((conversation) =>
+        conversation.name.toLowerCase().includes(normalizedSearchQuery),
       )
-    : conversationUsers;
+    : conversationRows;
 
   const filteredUsers = normalizedSearchQuery
     ? allUsers.filter((user) =>
@@ -68,7 +86,7 @@ function ChatSidebar() {
   return (
     <aside
       className={`w-full shrink-0 flex-col overflow-hidden border-r border-border lg:w-72 ${
-        !isLargeScreen && activeConversationId ? "hidden lg:flex" : "flex"
+        !isLargeScreen && hasSelection ? "hidden lg:flex" : "flex"
       }`}
     >
       <div className="shrink-0 border-b border-border px-2 pb-2 pt-2.5 sm:px-3 sm:pt-3">
@@ -81,6 +99,7 @@ function ChatSidebar() {
           <p className="flex-1 truncate text-lg font-bold tracking-tight sm:text-[22px]">
             {APP_NAME}
           </p>
+          <CreateGroupModal />
           <UserButton
             appearance={{
               elements: {
@@ -157,10 +176,10 @@ function ChatSidebar() {
           ) : (
             filteredUsers.map((user) => (
               <ConversationRow
-                key={user.conversationId}
+                key={user.id}
                 user={user}
-                selected={user.conversationId === activeConversationId}
-                onSelect={() => setActiveConversationId(user.conversationId)}
+                selected={user.id === activePeerId}
+                onSelect={() => selectDirectPeer(user.id)}
               />
             ))
           )}

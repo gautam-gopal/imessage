@@ -2,6 +2,15 @@ import { Avatar } from "@heroui/react";
 import { AvatarWithOnlineIndicator } from "./AvatarWithOnlineIndicator";
 
 export function ConversationRow({ user, selected, onSelect }) {
+  const avatar = (
+    <Avatar className="size-12 shrink-0">
+      <Avatar.Image alt={user.name} src={user.avatarUrl} />
+      <Avatar.Fallback className="text-sm font-medium">
+        {user.initials}
+      </Avatar.Fallback>
+    </Avatar>
+  );
+
   return (
     <button
       type="button"
@@ -10,15 +19,19 @@ export function ConversationRow({ user, selected, onSelect }) {
         selected ? "bg-accent-soft" : ""
       }`}
     >
-      <AvatarWithOnlineIndicator isOnline={user.isOnline ?? true}>
-        <Avatar className="size-12 shrink-0">
-          <Avatar.Image alt={user.name} src={user.avatarUrl} />
-          <Avatar.Fallback className="text-sm font-medium">{user.initials}</Avatar.Fallback>
-        </Avatar>
-      </AvatarWithOnlineIndicator>
+      {user.type === "group" ? (
+        avatar
+      ) : (
+        <AvatarWithOnlineIndicator isOnline={user.isOnline ?? true}>
+          {avatar}
+        </AvatarWithOnlineIndicator>
+      )}
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-[15px] font-semibold">{user.name}</p>
+        {user.subtitle ? (
+          <p className="truncate text-xs text-muted">{user.subtitle}</p>
+        ) : null}
       </div>
     </button>
   );

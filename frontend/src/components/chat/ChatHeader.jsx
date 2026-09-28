@@ -2,6 +2,7 @@ import { Avatar, Button } from "@heroui/react";
 import { ChevronLeftIcon, Volume2Icon, VolumeXIcon, XIcon } from "lucide-react";
 import { AppLogo } from "../AppLogo";
 import { AvatarWithOnlineIndicator } from "./AvatarWithOnlineIndicator";
+import { GroupMembersModal } from "./GroupMembersModal";
 
 import { ThemePresetPicker } from "../ThemePresetPicker";
 
@@ -13,10 +14,26 @@ import { useSelectedConversation } from "../../hooks/useSelectedConversation";
 
 export function ChatHeader() {
   const isSoundEnabled = useChatStore((state) => state.isSoundEnabled);
-  const setActiveConversationId = useChatStore((state) => state.setActiveConversationId);
+  const setActiveConversationId = useChatStore(
+    (state) => state.setActiveConversationId,
+  );
   const setSoundEnabled = useChatStore((state) => state.setSoundEnabled);
 
   const { activeConversation, isLargeScreen } = useSelectedConversation();
+
+  const isGroup = activeConversation?.type === "group";
+
+  const headerAvatar = activeConversation ? (
+    <Avatar className="size-9 shrink-0">
+      <Avatar.Image
+        alt={activeConversation.peer.name}
+        src={activeConversation.peer.avatarUrl}
+      />
+      <Avatar.Fallback className="text-sm font-medium">
+        {activeConversation.peer.initials}
+      </Avatar.Fallback>
+    </Avatar>
+  ) : null;
 
   return (
     <header className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center gap-1 border-b border-border px-1.5 py-1.5 sm:gap-2 sm:px-2 sm:py-2">
@@ -34,24 +51,24 @@ export function ChatHeader() {
 
       {activeConversation ? (
         <>
-          <AvatarWithOnlineIndicator isOnline={activeConversation.peer.isOnline ?? true}>
-            <Avatar className="size-9 shrink-0">
-              <Avatar.Image
-                alt={activeConversation.peer.name}
-                src={activeConversation.peer.avatarUrl}
-              />
-              <Avatar.Fallback className="text-sm font-medium">
-                {activeConversation.peer.initials}
-              </Avatar.Fallback>
-            </Avatar>
-          </AvatarWithOnlineIndicator>
+          {isGroup ? (
+            headerAvatar
+          ) : (
+            <AvatarWithOnlineIndicator
+              isOnline={activeConversation.peer.isOnline ?? true}
+            >
+              {headerAvatar}
+            </AvatarWithOnlineIndicator>
+          )}
 
           <div className="flex-1 text-center sm:text-left">
             <p className="truncate text-[15px] font-semibold leading-tight">
               {activeConversation.peer.name}
             </p>
             <p className="truncate text-xs text-muted">
-              {activeConversation.peer.isOnline ? (
+              {isGroup ? (
+                activeConversation.peer.subtitle
+              ) : activeConversation.peer.isOnline ? (
                 <span className="font-medium text-success">Online</span>
               ) : (
                 "Offline"
@@ -63,7 +80,9 @@ export function ChatHeader() {
         <div className="flex flex-1 items-center gap-2.5 sm:text-left">
           <AppLogo size={36} className="rounded-[9px]" />
           <div className="flex-1 text-center sm:text-left">
-            <p className="truncate text-[13px] font-medium text-muted">Select a conversation</p>
+            <p className="truncate text-[13px] font-medium text-muted">
+              Select a conversation
+            </p>
           </div>
         </div>
       )}
@@ -75,6 +94,10 @@ export function ChatHeader() {
         </div>
 
         <ThemeToggle />
+
+        {isGroup ? (
+          <GroupMembersModal conversationId={activeConversation.id} />
+        ) : null}
 
         <Button
           variant="ghost"

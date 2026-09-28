@@ -1,13 +1,25 @@
+import { Fragment } from "react";
 import useScrollToBottom from "../../hooks/useScrollToBottom";
+import { useChatStore } from "../../store/useChatStore";
 import { MessageBubble } from "./MessageBubble";
 import { NoConversationPlaceholder } from "./NoConversationPlaceholder";
 import { useSelectedConversation } from "../../hooks/useSelectedConversation";
 
 export function MessageList() {
-  const { activeConversation, activeConversationId } = useSelectedConversation();
+  const { activeConversation, activeConversationId } =
+    useSelectedConversation();
+  const users = useChatStore((state) => state.users);
+
+  const isGroup = activeConversation?.type === "group";
+  const senderName = (senderId) =>
+    users.find((user) => String(user._id) === senderId)?.fullName ||
+    "Unknown user";
 
   const lastMessageId = activeConversation?.messages.at(-1)?.id;
-  const messagesScrollRef = useScrollToBottom(activeConversationId, lastMessageId);
+  const messagesScrollRef = useScrollToBottom(
+    activeConversationId,
+    lastMessageId,
+  );
 
   return (
     <div className="relative flex flex-1 flex-col overflow-hidden">
@@ -19,9 +31,26 @@ export function MessageList() {
           <p className="mb-3 text-center text-[11px] font-medium uppercase tracking-wide text-muted">
             Today
           </p>
-          {activeConversation.messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
-          ))}
+          {activeConversation.messages.map((message, index) => {
+            // Group chats: label other people's messages with the sender's
+            // name, once per consecutive run from the same sender.
+            const showSender =
+              isGroup &&
+              message.role === "them" &&
+              activeConversation.messages[index - 1]?.senderId !==
+                message.senderId;
+
+            return (
+              <Fragment key={message.id}>
+                {showSender ? (
+                  <p className="mt-1 px-1 text-[11px] font-medium text-muted">
+                    {senderName(message.senderId)}
+                  </p>
+                ) : null}
+                <MessageBubble message={message} />
+              </Fragment>
+            );
+          })}
         </div>
       ) : (
         <NoConversationPlaceholder />

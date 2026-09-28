@@ -33,6 +33,24 @@ export function joinConversationRoom(conversation) {
   }
 }
 
+// Removes every currently-connected socket belonging to userId from a
+// conversation's room. Delivery-state cleanup only — not an authorization
+// step. Used when a group member is removed or self-leaves, so they stop
+// receiving room events for a conversation they're no longer part of. If
+// this is ever skipped, reconnect already rebuilds room membership from
+// current DB state, so it cannot become a stale-authorization hole.
+export function leaveConversationRoom(conversationId, userId) {
+  if (!conversationId || !userId) return;
+
+  const room = String(conversationId);
+  const sockets = userSocketMap[String(userId)];
+  if (!sockets) return;
+
+  for (const socketId of sockets) {
+    io.in(socketId).socketsLeave(room);
+  }
+}
+
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;

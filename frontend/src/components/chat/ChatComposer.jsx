@@ -3,7 +3,6 @@ import { ImageIcon, LoaderIcon, SendHorizontalIcon } from "lucide-react";
 import { useRef } from "react";
 import useKeyboardSound from "../../hooks/useKeyboardSound";
 import { useChatStore } from "../../store/useChatStore";
-import { useSelectedConversation } from "../../hooks/useSelectedConversation";
 
 export function ChatComposer() {
   const composerText = useChatStore((state) => state.composerText);
@@ -12,7 +11,6 @@ export function ChatComposer() {
   const isSendingMedia = useChatStore((state) => state.isSendingMedia);
   const sendTextMessage = useChatStore((state) => state.sendTextMessage);
   const setComposerText = useChatStore((state) => state.setComposerText);
-  const { activeConversationId } = useSelectedConversation();
   const { playRandomKeyStrokeSound } = useKeyboardSound();
   const mediaInputRef = useRef(null);
 
@@ -21,7 +19,7 @@ export function ChatComposer() {
   };
 
   const handleSend = async () => {
-    const didSendMessage = await sendTextMessage(activeConversationId);
+    const didSendMessage = await sendTextMessage();
     if (didSendMessage) playSoundIfEnabled();
   };
 
@@ -35,10 +33,7 @@ export function ChatComposer() {
     event.target.value = "";
     if (!file) return;
 
-    const didSendMessage = await sendMediaMessage({
-      conversationId: activeConversationId,
-      file,
-    });
+    const didSendMessage = await sendMediaMessage({ file });
 
     if (didSendMessage) playSoundIfEnabled();
   };
@@ -91,7 +86,12 @@ export function ChatComposer() {
           className="flex-1 rounded-full"
         />
 
-        <Button variant="primary" isIconOnly isDisabled={!composerText.trim()} onPress={handleSend}>
+        <Button
+          variant="primary"
+          isIconOnly
+          isDisabled={!composerText.trim()}
+          onPress={handleSend}
+        >
           <SendHorizontalIcon className="size-5" />
         </Button>
       </div>
