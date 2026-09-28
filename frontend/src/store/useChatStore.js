@@ -9,7 +9,45 @@ import toast from "react-hot-toast";
 // reference, without touching any other listener that might be registered
 // on the same shared socket for other purposes, present or future.
 let newMessageHandler = null;
+let messageReadHandler = null;
 
+// Message ids are 24-char hex ObjectIds. Lowercased fixed-width hex compares
+// lexicographically exactly as the numeric ObjectId ordering does, which is
+// the same _id ordering the server uses for "read up to" (Stage 5/6).
+function compareObjectIds(a, b) {
+  const x = String(a).toLowerCase();
+  const y = String(b).toLowerCase();
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+// Union of two readBy arrays, one entry per user. readBy is append-only on
+// the server and first-read-wins, so a union is always correct; on a
+// (never expected) conflict the earlier readAt is kept.
+function mergeReadBy(current, incoming) {
+  if (!incoming?.length) return current ?? [];
+  if (!current?.length) return incoming;
+
+  const merged = new Map();
+  for (const entry of [...current, ...incoming]) {
+    const userId = String(entry.userId);
+    const prior = merged.get(userId);
+    if (!prior || new Date(entry.readAt) < new Date(prior.readAt)) {
+      merged.set(userId, { userId, readAt: entry.readAt });
+    }
+  }
+  return Array.from(merged.values());
+}
+
+// Emits message:read and resolves with the server ack
+// ({ ok, modifiedCount } | { ok: false, error }). Never rejects.
+function emitMarkRead(socket, payload) {
+  return new Promise((resolve) => {
+    socket.timeout(5000).emit("message:read", payload, (err, ack) => {
+      if (err) return resolve({ ok: false, error: "Read receipt timed out" });
+      resolve(ack ?? { ok: false, error: "No acknowledgement" });
+    });
+  });
+}
 // Converts one row of GET /messages/conversations (backend shape:
 // { _id, type, peer } for direct, { _id, type, name, avatar,
 // participantCount, admins } for group) into the single frontend
@@ -238,8 +276,15 @@ export const useChatStore = create(
 
           for (const message of messagesForConversation) {
             const id = String(message._id);
-            if (!byId.has(id)) addedCount += 1;
-            byId.set(id, message);
+            const previous = byId.get(id);
+            if (!previous) addedCount += 1;
+            // Replace the message but union readBy, so a late POST response
+            // or a stale REST snapshot can never erase a read receipt that
+            // a message:read event already applied.
+            byId.set(id, {
+              ...message,
+              readBy: mergeReadBy(previous?.readBy, message.readBy),
+            });
           }
 
           const merged = Array.from(byId.values()).sort((a, b) => {
@@ -285,6 +330,112 @@ export const useChatStore = create(
         });
 
         return { addedCount };
+      },
+
+      // Applies one server "message:read" payload (or the REST fallback's
+      // response, which has the same shape). Idempotent and first-read-wins:
+      // an existing entry for the reader is never touched or duplicated.
+      // The reader's own messages are excluded. If the conversation's
+      // bucket isn't loaded (or is partial), only loaded messages are
+      // updated; anything fetched later carries its own readBy.
+      applyReadReceipt: ({
+        conversationId,
+        readerId,
+        upToMessageId,
+        readAt,
+      }) => {
+        const key = String(conversationId);
+        const reader = String(readerId);
+        const upTo = String(upToMessageId);
+
+        set((state) => {
+          const bucket = state.messagesByConversationId[key];
+          if (!bucket || bucket.length === 0) return state;
+
+          let changed = false;
+          const next = bucket.map((message) => {
+            if (String(message.senderId) === reader) return message;
+            if (compareObjectIds(message._id, upTo) > 0) return message;
+
+            const readBy = message.readBy || [];
+            if (readBy.some((entry) => String(entry.userId) === reader)) {
+              return message;
+            }
+
+            changed = true;
+            return {
+              ...message,
+              readBy: [...readBy, { userId: reader, readAt }],
+            };
+          });
+
+          if (!changed) return state;
+
+          return {
+            messagesByConversationId: {
+              ...state.messagesByConversationId,
+              [key]: next,
+            },
+          };
+        });
+      },
+
+      // Newest (by _id) message in the loaded bucket that was sent by
+      // someone else and that the current user has not read, or null.
+      // Pure derivation for Part 4; it decides nothing about visibility.
+      getUnreadReadAnchor: (conversationId) => {
+        const myId = String(useAuthStore.getState().authUser?._id);
+        const bucket =
+          get().messagesByConversationId[String(conversationId)] || [];
+
+        let anchor = null;
+        for (const message of bucket) {
+          if (String(message.senderId) === myId) continue;
+          if ((message.readBy || []).some((e) => String(e.userId) === myId)) {
+            continue;
+          }
+          const id = String(message._id);
+          if (anchor === null || compareObjectIds(id, anchor) > 0) anchor = id;
+        }
+        return anchor;
+      },
+
+      // Tells the server the current user has read a conversation up to
+      // upToMessageId. Socket-first (the server then broadcasts message:read
+      // to the whole room, including this user's own devices, and that
+      // broadcast updates local state). Falls back to REST only when the
+      // socket is disconnected; the REST endpoint does not broadcast, so
+      // other participants see the receipt on their next history load, and
+      // the response is applied locally here. Resolves { ok, modifiedCount }
+      // or { ok: false, error }; never throws, never toasts.
+      markConversationRead: async (conversationId, upToMessageId) => {
+        if (!conversationId || !upToMessageId) {
+          return { ok: false, error: "Missing conversation or message" };
+        }
+
+        const payload = {
+          conversationId: String(conversationId),
+          upToMessageId: String(upToMessageId),
+        };
+
+        const socket = useAuthStore.getState().socket;
+        if (socket?.connected) return emitMarkRead(socket, payload);
+
+        try {
+          const res = await axiosInstance.post(
+            `/conversations/${payload.conversationId}/read`,
+            { upToMessageId: payload.upToMessageId },
+          );
+          if (res.data.modifiedCount > 0) get().applyReadReceipt(res.data);
+          return { ok: true, modifiedCount: res.data.modifiedCount };
+        } catch (error) {
+          return {
+            ok: false,
+            error:
+              error.response?.data?.message ||
+              "Failed to mark messages as read",
+          };
+        }
       },
 
       // Loads history for the current selection: group -> conversation-
@@ -342,13 +493,25 @@ export const useChatStore = create(
         if (newMessageHandler) {
           socket.off("newMessage", newMessageHandler);
         }
+        if (messageReadHandler) {
+          socket.off("message:read", messageReadHandler);
+        }
 
         newMessageHandler = (newMessage) => {
           const { addedCount } = get().ingestMessages([newMessage]);
           if (addedCount > 0) get().getConversations();
         };
 
+        // Routed by the event's own conversationId, independent of the
+        // selected conversation (same model as newMessage).
+        messageReadHandler = (payload) => {
+          if (!payload?.conversationId || !payload?.readerId) return;
+          if (!payload.upToMessageId) return;
+          get().applyReadReceipt(payload);
+        };
+
         socket.on("newMessage", newMessageHandler);
+        socket.on("message:read", messageReadHandler);
       },
 
       unsubscribeFromMessages: () => {
@@ -356,9 +519,12 @@ export const useChatStore = create(
         if (socket && newMessageHandler) {
           socket.off("newMessage", newMessageHandler);
         }
+        if (socket && messageReadHandler) {
+          socket.off("message:read", messageReadHandler);
+        }
         newMessageHandler = null;
+        messageReadHandler = null;
       },
-
       // Selects an existing conversation (direct or group) by its real
       // Conversation _id. Passing null clears the selection entirely,
       // including any pending direct peer. Cached messages are never

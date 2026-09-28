@@ -32,3 +32,16 @@ export const addMemberBodySchema = z
     memberId: objectId("member ID"),
   })
   .strict();
+
+export const markReadBodySchema = z
+  .object({
+    upToMessageId: objectId("message ID"),
+  })
+  .strict();
+
+export const markReadSocketPayloadSchema = z
+  .object({
+    conversationId: objectId("conversation ID"),
+    upToMessageId: objectId("message ID"),
+  })
+  .strict();

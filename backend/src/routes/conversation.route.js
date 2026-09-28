@@ -5,6 +5,7 @@ import {
   removeMember,
   sendConversationMessage,
   getConversationMessages,
+  markConversationRead,
 } from "../controllers/conversation.controller.js";
 import { protectRoute } from "../middleware/auth.middleware.js";
 import { validate } from "../middleware/validate.middleware.js";
@@ -21,6 +22,7 @@ import {
   conversationIdParamsSchema,
   memberParamsSchema,
   addMemberBodySchema,
+  markReadBodySchema,
 } from "../lib/validators/conversation.validators.js";
 import { sendMessageBodySchema } from "../lib/validators/message.validators.js";
 
@@ -69,6 +71,14 @@ router.get(
   requireConversationMembership,
   requireGroupConversation,
   getConversationMessages,
+);
+
+router.post(
+  "/:conversationId/read",
+  validate(conversationIdParamsSchema, "params"),
+  requireConversationMembership,
+  validate(markReadBodySchema, "body"),
+  markConversationRead,
 );
 
 export default router;

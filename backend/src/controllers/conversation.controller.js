@@ -13,6 +13,7 @@ import {
   joinConversationRoom,
   leaveConversationRoom,
 } from "../lib/socket.js";
+import { markMessagesReadUpTo } from "../lib/read-receipts.js";
 
 export async function createGroup(req, res, next) {
   try {
@@ -249,6 +250,37 @@ export async function getConversationMessages(req, res, next) {
     }).sort({ createdAt: 1 });
 
     res.json(messages);
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Requires requireConversationMembership to have already run
+// (conversation.route.js). Valid for both direct and group conversations.
+export async function markConversationRead(req, res, next) {
+  try {
+    if (req.user.isSystemUser) {
+      const err = new Error("System users cannot mark messages as read");
+      err.statusCode = 403;
+      return next(err);
+    }
+
+    const { conversation } = req;
+    const { upToMessageId } = req.body;
+
+    const result = await markMessagesReadUpTo({
+      conversationId: conversation._id,
+      userId: req.user._id,
+      upToMessageId,
+    });
+
+    if (!result) {
+      const err = new Error("Message not found");
+      err.statusCode = 404;
+      return next(err);
+    }
+
+    res.status(200).json(result);
   } catch (error) {
     next(error);
   }

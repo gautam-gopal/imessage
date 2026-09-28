@@ -4,6 +4,8 @@ import { Server } from "socket.io";
 import { verifyToken } from "@clerk/backend";
 import User from "../models/user.model.js";
 import Conversation from "../models/conversation.model.js";
+import { markMessagesReadUpTo } from "./read-receipts.js";
+import { markReadSocketPayloadSchema } from "./validators/conversation.validators.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -106,6 +108,70 @@ io.on("connection", (socket) => {
       ).catch((error) => {
         console.error("Error updating lastSeenAt:", error.message);
       });
+    }
+  });
+
+  // Client -> server: "I have read everything in this conversation up to
+  // upToMessageId". Identity is the handshake-derived socket.userId; the
+  // payload is only a claim. Authorization is a fresh DB check, never the
+  // socket's room membership.
+  socket.on("message:read", async (payload, ack) => {
+    const respond = (body) => {
+      if (typeof ack === "function") ack(body);
+    };
+
+    try {
+      const parsed = markReadSocketPayloadSchema.safeParse(payload);
+      if (!parsed.success) {
+        return respond({
+          ok: false,
+          error: parsed.error.issues[0]?.message || "Invalid request",
+        });
+      }
+
+      const { conversationId, upToMessageId } = parsed.data;
+
+      const [humanUser, conversation] = await Promise.all([
+        User.exists({ _id: userId, isSystemUser: { $ne: true } }),
+        Conversation.findOne(
+          { _id: conversationId, participants: userId },
+          { _id: 1 },
+        ).lean(),
+      ]);
+
+      if (!humanUser) {
+        return respond({ ok: false, error: "Forbidden" });
+      }
+
+      if (!conversation) {
+        return respond({ ok: false, error: "Conversation not found" });
+      }
+
+      const result = await markMessagesReadUpTo({
+        conversationId: conversation._id,
+        userId,
+        upToMessageId,
+      });
+
+      if (!result) {
+        return respond({ ok: false, error: "Message not found" });
+      }
+
+      if (result.modifiedCount > 0) {
+        // Room name comes from the DB document's _id (canonical lowercase
+        // hex), not the client string, so it always matches the join key.
+        io.to(String(conversation._id)).emit("message:read", {
+          conversationId: String(conversation._id),
+          readerId: String(result.readerId),
+          upToMessageId: String(result.upToMessageId),
+          readAt: result.readAt,
+        });
+      }
+
+      respond({ ok: true, modifiedCount: result.modifiedCount });
+    } catch (error) {
+      console.error("Error in message:read handler:", error.message);
+      respond({ ok: false, error: "Internal server error" });
     }
   });
 

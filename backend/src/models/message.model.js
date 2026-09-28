@@ -1,5 +1,20 @@
 import mongoose from "mongoose";
 
+const readReceiptSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    readAt: {
+      type: Date,
+      required: true,
+    },
+  },
+  { _id: false },
+);
+
 const messageSchema = new mongoose.Schema(
   {
     senderId: {
@@ -29,6 +44,10 @@ const messageSchema = new mongoose.Schema(
 
     video: {
       type: String,
+    },
+
+    readBy: {
+      type: [readReceiptSchema],
     },
   },
   {

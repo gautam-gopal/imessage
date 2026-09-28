@@ -1,6 +1,7 @@
 import { useWallpaper } from "../context/wallpaper";
 import { useChatStore } from "../store/useChatStore";
 import { useSelectedConversation } from "../hooks/useSelectedConversation";
+import { useMarkConversationRead } from "../hooks/useMarkConversationRead";
 import { useEffect } from "react";
 import ChatSidebar from "../components/chat/ChatSidebar";
 import { ChatHeader } from "../components/chat/ChatHeader";
@@ -27,6 +28,8 @@ function ChatPage() {
     hasSelection,
     isLargeScreen,
   } = useSelectedConversation();
+
+  useMarkConversationRead(activeConversationId);
 
   useEffect(() => {
     getUsers();
