@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { isImageKitUrl, withTransform } from "../../lib/imagekit";
 
 // Chat videos are stored on ImageKit, so we let ImageKit optimize delivery
@@ -14,14 +15,46 @@ function buildPosterUrl(url) {
   return withTransform(`${path}/ik-thumbnail.jpg`, POSTER_TRANSFORM);
 }
 
-/** ImageKit-optimized chat video with an auto-generated poster frame. */
+/** ImageKit-optimized chat video with an auto-generated poster frame.
+ *  The video source is only attached once the element nears the chat scroll area. */
 export function MessageVideo({ src }) {
+  const videoRef = useRef(null);
+  // Browsers without IntersectionObserver load immediately.
+  const [shouldLoad, setShouldLoad] = useState(
+    () => typeof IntersectionObserver === "undefined",
+  );
+
   const optimizedSrc = withTransform(src, VIDEO_TRANSFORM);
   const posterSrc = buildPosterUrl(src);
 
+  useEffect(() => {
+    if (shouldLoad) return;
+    const el = videoRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoad(true);
+          observer.disconnect();
+        }
+      },
+      {
+        // The chat scrolls inside its own container, so observe relative to it.
+        // Falls back to the browser viewport if the container isn't found.
+        root: el.closest("[data-message-scroll-root]"),
+        rootMargin: "200px 0px",
+      },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [shouldLoad]);
+
   return (
     <video
-      src={optimizedSrc}
+      ref={videoRef}
+      src={shouldLoad ? optimizedSrc : undefined}
       poster={posterSrc}
       controls
       playsInline
