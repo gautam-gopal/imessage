@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "db:seed:users": "node src/seeds/user.seed.js",
     "db:seed:messages": "node src/seeds/message.seed.js",
-    "db:migrate:conversations": "node src/migrations/001-conversation-backfill.js"
+    "db:migrate:conversations": "node src/migrations/001-conversation-backfill.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -28,5 +30,11 @@
     "nodemon": "^3.1.14",
     "socket.io": "^4.8.3",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0",
+    "socket.io-client": "^4.8.4",
+    "supertest": "^7.3.0",
+    "vitest": "^5.0.2"
   }
 }
