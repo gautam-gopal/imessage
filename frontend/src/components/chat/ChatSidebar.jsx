@@ -69,7 +69,10 @@ function ChatSidebar() {
   const conversationRows = conversations.map((conversation) =>
     mapConversationForList(conversation, onlineUsers),
   );
-  const allUsers = users.map((user) => mapUserForList(user, onlineUsers));
+  // System users (the AI) are reached by @mention, not by starting a chat.
+  const allUsers = users
+    .filter((user) => !user.isSystemUser)
+    .map((user) => mapUserForList(user, onlineUsers));
 
   const filteredConversations = normalizedSearchQuery
     ? conversationRows.filter((conversation) =>

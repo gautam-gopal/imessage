@@ -42,8 +42,18 @@ const mine = (n, overrides = {}) =>
 const readEntry = (userId, seconds) => ({ userId, readAt: iso(seconds) });
 
 const conversationRows = [
-  { _id: CONV_A, type: "direct", lastMessageAt: iso(0), peer: { _id: PEER_A, fullName: "Peer A", profilePic: "" } },
-  { _id: CONV_B, type: "direct", lastMessageAt: iso(0), peer: { _id: PEER_B, fullName: "Peer B", profilePic: "" } },
+  {
+    _id: CONV_A,
+    type: "direct",
+    lastMessageAt: iso(0),
+    peer: { _id: PEER_A, fullName: "Peer A", profilePic: "" },
+  },
+  {
+    _id: CONV_B,
+    type: "direct",
+    lastMessageAt: iso(0),
+    peer: { _id: PEER_B, fullName: "Peer B", profilePic: "" },
+  },
 ];
 
 function deferred() {
@@ -85,12 +95,18 @@ function mockRoutes(routes = {}) {
 }
 
 const page = (messages, pageInfo) => ({ data: { messages, pageInfo } });
-const pageInfo = (over = {}) => ({ limit: 30, hasMore: true, nextCursor: oid(0x50), ...over });
+const pageInfo = (over = {}) => ({
+  limit: 30,
+  hasMore: true,
+  nextCursor: oid(0x50),
+  ...over,
+});
 
 const S = () => useChatStore.getState();
 const bucket = (conv) => S().messagesByConversationId[conv];
 const ids = (conv) => (bucket(conv) ?? []).map((m) => m._id);
-const readers = (message) => (message.readBy ?? []).map((r) => String(r.userId));
+const readers = (message) =>
+  (message.readBy ?? []).map((r) => String(r.userId));
 
 async function seedConversations(active = CONV_A) {
   await S().getConversations();
@@ -131,14 +147,19 @@ describe("conversation-keyed message state", () => {
 
     expect(ids(CONV_A)).toEqual([oid(1), oid(2)]);
     expect(ids(CONV_B)).toEqual([oid(3)]);
-    expect(Object.keys(S().messagesByConversationId).sort()).toEqual([CONV_A, CONV_B].sort());
+    expect(Object.keys(S().messagesByConversationId).sort()).toEqual(
+      [CONV_A, CONV_B].sort(),
+    );
   });
 
   it("stores a live message for a non-selected conversation in its own bucket", async () => {
     await seedConversations(CONV_A);
     const socket = connectFakeSocket();
 
-    socket.trigger("newMessage", msg(7, { conversationId: CONV_B, senderId: PEER_B }));
+    socket.trigger(
+      "newMessage",
+      msg(7, { conversationId: CONV_B, senderId: PEER_B }),
+    );
 
     expect(ids(CONV_B)).toEqual([oid(7)]);
     expect(bucket(CONV_A)).toBeUndefined();
@@ -163,7 +184,10 @@ describe("conversation-keyed message state", () => {
   it("does not misfile a batch that mixes conversations", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const { addedCount } = S().ingestMessages([msg(1), msg(2, { conversationId: CONV_B })]);
+    const { addedCount } = S().ingestMessages([
+      msg(1),
+      msg(2, { conversationId: CONV_B }),
+    ]);
 
     expect(addedCount).toBe(1);
     expect(ids(CONV_A)).toEqual([oid(1)]);
@@ -184,7 +208,9 @@ describe("deduplication by _id", () => {
   it("stores one copy when a message arrives by history, POST response and socket echo", async () => {
     await seedConversations(CONV_A);
     const socket = connectFakeSocket();
-    mockRoutes({ [`/messages/${PEER_A}`]: () => page([msg(1), msg(2)], pageInfo()) });
+    mockRoutes({
+      [`/messages/${PEER_A}`]: () => page([msg(1), msg(2)], pageInfo()),
+    });
     const sent = mine(10);
     axiosInstance.post.mockResolvedValue({ data: sent });
 
@@ -200,7 +226,9 @@ describe("deduplication by _id", () => {
     await seedConversations(CONV_A);
     const socket = connectFakeSocket();
     socket.trigger("newMessage", msg(3));
-    mockRoutes({ [`/messages/${PEER_A}`]: () => page([msg(1), msg(2), msg(3)], pageInfo()) });
+    mockRoutes({
+      [`/messages/${PEER_A}`]: () => page([msg(1), msg(2), msg(3)], pageInfo()),
+    });
 
     await S().getMessages();
 
@@ -227,7 +255,10 @@ describe("message ordering", () => {
   });
 
   it("puts createdAt before _id (display order, not cursor order)", () => {
-    S().ingestMessages([msg(2, { createdAt: iso(50) }), msg(9, { createdAt: iso(10) })]);
+    S().ingestMessages([
+      msg(2, { createdAt: iso(50) }),
+      msg(9, { createdAt: iso(10) }),
+    ]);
     expect(ids(CONV_A)).toEqual([oid(9), oid(2)]);
   });
 
@@ -248,7 +279,12 @@ describe("readBy handling", () => {
 
   it("does not let a stale copy without readBy erase an applied receipt", () => {
     S().ingestMessages([mine(1)]);
-    S().applyReadReceipt({ conversationId: CONV_A, readerId: PEER_A, upToMessageId: oid(1), readAt: iso(9) });
+    S().applyReadReceipt({
+      conversationId: CONV_A,
+      readerId: PEER_A,
+      upToMessageId: oid(1),
+      readAt: iso(9),
+    });
 
     S().ingestMessages([mine(1)]); // e.g. a late POST response
 
@@ -307,9 +343,19 @@ describe("applyReadReceipt", () => {
 
   it("tracks several group readers independently", () => {
     S().ingestMessages([
-      { _id: oid(1), conversationId: GROUP, senderId: ME, text: "hi", createdAt: iso(1) },
+      {
+        _id: oid(1),
+        conversationId: GROUP,
+        senderId: ME,
+        text: "hi",
+        createdAt: iso(1),
+      },
     ]);
-    const base = { conversationId: GROUP, upToMessageId: oid(1), readAt: iso(5) };
+    const base = {
+      conversationId: GROUP,
+      upToMessageId: oid(1),
+      readAt: iso(5),
+    };
 
     S().applyReadReceipt({ ...base, readerId: PEER_A });
     S().applyReadReceipt({ ...base, readerId: PEER_B });
@@ -325,7 +371,9 @@ describe("applyReadReceipt", () => {
 
   it("updates only the addressed bucket when message:read arrives over the socket", () => {
     S().ingestMessages([mine(1)]);
-    S().ingestMessages([mine(2, { conversationId: CONV_B, receiverId: PEER_B })]);
+    S().ingestMessages([
+      mine(2, { conversationId: CONV_B, receiverId: PEER_B }),
+    ]);
     const bucketB = bucket(CONV_B);
     const socket = connectFakeSocket();
 
@@ -335,23 +383,60 @@ describe("applyReadReceipt", () => {
     expect(bucket(CONV_B)).toBe(bucketB); // untouched, same reference
   });
 
+  it("shows one toast for a private assistant:error and stops listening on unsubscribe", async () => {
+    const toast = (await import("react-hot-toast")).default;
+    const socket = connectFakeSocket();
+
+    socket.trigger("assistant:error", {
+      conversationId: CONV_A,
+      reason: "rate_limited",
+    });
+    socket.trigger("assistant:error", { reason: "unavailable" });
+    socket.trigger("assistant:error", null);
+
+    expect(toast.error).toHaveBeenCalledTimes(3);
+    expect(toast.error.mock.calls[0][0]).toMatch(/limit/i);
+    expect(toast.error.mock.calls[1][0]).toMatch(/unavailable/i);
+    expect(toast.error.mock.calls[2][0]).toMatch(/unavailable/i);
+    expect(toast.error.mock.calls[0][1]).toEqual({ id: "assistant-error" });
+
+    S().unsubscribeFromMessages();
+    socket.trigger("assistant:error", { reason: "unavailable" });
+    expect(toast.error).toHaveBeenCalledTimes(3);
+  });
+
   it("ignores malformed message:read payloads", () => {
     S().ingestMessages([mine(1)]);
     const before = S().messagesByConversationId;
     const socket = connectFakeSocket();
 
-    socket.trigger("message:read", { conversationId: CONV_A, upToMessageId: oid(1) }); // no readerId
-    socket.trigger("message:read", { conversationId: CONV_A, readerId: PEER_A }); // no anchor
+    socket.trigger("message:read", {
+      conversationId: CONV_A,
+      upToMessageId: oid(1),
+    }); // no readerId
+    socket.trigger("message:read", {
+      conversationId: CONV_A,
+      readerId: PEER_A,
+    }); // no anchor
     socket.trigger("message:read", null);
 
     expect(S().messagesByConversationId).toBe(before);
   });
 
   it("derives the newest unread message from someone else as the read anchor", () => {
-    S().ingestMessages([msg(1, { readBy: [readEntry(ME, 3)] }), msg(2), mine(3)]);
+    S().ingestMessages([
+      msg(1, { readBy: [readEntry(ME, 3)] }),
+      msg(2),
+      mine(3),
+    ]);
     expect(S().getUnreadReadAnchor(CONV_A)).toBe(oid(2));
 
-    S().applyReadReceipt({ conversationId: CONV_A, readerId: ME, upToMessageId: oid(2), readAt: iso(9) });
+    S().applyReadReceipt({
+      conversationId: CONV_A,
+      readerId: ME,
+      upToMessageId: oid(2),
+      readAt: iso(9),
+    });
     expect(S().getUnreadReadAnchor(CONV_A)).toBeNull();
   });
 });
@@ -368,7 +453,10 @@ describe("pagination state per conversation", () => {
       [`/messages/${PEER_A}`]: () =>
         page([msg(5), msg(6)], pageInfo({ nextCursor: CURSOR_A })),
       [`/messages/${PEER_B}`]: () =>
-        page([msg(8, { conversationId: CONV_B, senderId: PEER_B })], pageInfo({ hasMore: false, nextCursor: null })),
+        page(
+          [msg(8, { conversationId: CONV_B, senderId: PEER_B })],
+          pageInfo({ hasMore: false, nextCursor: null }),
+        ),
       ...routes,
     });
     await seedConversations(CONV_A);
@@ -382,10 +470,16 @@ describe("pagination state per conversation", () => {
     await loadFirstPages();
 
     expect(S().historyByConversationId[CONV_A]).toEqual({
-      limit: 30, hasMore: true, nextCursor: CURSOR_A, isLoadingOlder: false,
+      limit: 30,
+      hasMore: true,
+      nextCursor: CURSOR_A,
+      isLoadingOlder: false,
     });
     expect(S().historyByConversationId[CONV_B]).toEqual({
-      limit: 30, hasMore: false, nextCursor: null, isLoadingOlder: false,
+      limit: 30,
+      hasMore: false,
+      nextCursor: null,
+      isLoadingOlder: false,
     });
   });
 
@@ -395,7 +489,10 @@ describe("pagination state per conversation", () => {
     mockRoutes({
       [`/messages/${PEER_A}`]: (config) => {
         olderRequests.push(config);
-        return page([msg(3), msg(4)], pageInfo({ hasMore: false, nextCursor: null }));
+        return page(
+          [msg(3), msg(4)],
+          pageInfo({ hasMore: false, nextCursor: null }),
+        );
       },
     });
     const historyB = S().historyByConversationId[CONV_B];
@@ -404,8 +501,13 @@ describe("pagination state per conversation", () => {
     const result = await S().loadOlderMessages(CONV_A);
 
     expect(result).toEqual({ ok: true, addedCount: 2 });
-    expect(olderRequests).toEqual([{ params: { before: CURSOR_A, limit: 30 } }]);
-    expect(S().historyByConversationId[CONV_A]).toMatchObject({ hasMore: false, nextCursor: null });
+    expect(olderRequests).toEqual([
+      { params: { before: CURSOR_A, limit: 30 } },
+    ]);
+    expect(S().historyByConversationId[CONV_A]).toMatchObject({
+      hasMore: false,
+      nextCursor: null,
+    });
     expect(ids(CONV_A)).toEqual([oid(3), oid(4), oid(5), oid(6)]);
     expect(S().historyByConversationId[CONV_B]).toBe(historyB);
     expect(bucket(CONV_B)).toBe(bucketB);
@@ -425,7 +527,9 @@ describe("pagination state per conversation", () => {
     expect(S().historyByConversationId[CONV_B].isLoadingOlder).toBe(false);
     expect(axiosInstance.get).toHaveBeenCalledTimes(1);
 
-    gate.resolve(page([msg(3)], pageInfo({ hasMore: false, nextCursor: null })));
+    gate.resolve(
+      page([msg(3)], pageInfo({ hasMore: false, nextCursor: null })),
+    );
     await first;
     expect(S().historyByConversationId[CONV_A].isLoadingOlder).toBe(false);
   });
@@ -439,7 +543,9 @@ describe("pagination state per conversation", () => {
 
     const pending = S().loadOlderMessages(CONV_A);
     S().setActiveConversationId(CONV_B); // user switches mid-request
-    gate.resolve(page([msg(3), msg(4)], pageInfo({ hasMore: false, nextCursor: null })));
+    gate.resolve(
+      page([msg(3), msg(4)], pageInfo({ hasMore: false, nextCursor: null })),
+    );
     await pending;
 
     expect(ids(CONV_A)).toEqual([oid(3), oid(4), oid(5), oid(6)]);
@@ -452,16 +558,27 @@ describe("pagination state per conversation", () => {
     const gate = deferred();
     const FRESH_CURSOR = oid(0x99);
     let firstPage = page([msg(5), msg(6)], pageInfo({ nextCursor: CURSOR_A }));
-    await loadFirstPages({ [`/messages/${PEER_A}`]: (config) => (config?.params ? gate.promise : firstPage) });
+    await loadFirstPages({
+      [`/messages/${PEER_A}`]: (config) =>
+        config?.params ? gate.promise : firstPage,
+    });
 
     const pending = S().loadOlderMessages(CONV_A); // captured CURSOR_A
-    firstPage = page([msg(5), msg(6), msg(7)], pageInfo({ nextCursor: FRESH_CURSOR }));
+    firstPage = page(
+      [msg(5), msg(6), msg(7)],
+      pageInfo({ nextCursor: FRESH_CURSOR }),
+    );
     await S().getMessages(); // a fresh first load moves the cursor
-    gate.resolve(page([msg(3), msg(4)], pageInfo({ hasMore: false, nextCursor: null })));
+    gate.resolve(
+      page([msg(3), msg(4)], pageInfo({ hasMore: false, nextCursor: null })),
+    );
     await pending;
 
     expect(S().historyByConversationId[CONV_A]).toEqual({
-      limit: 30, hasMore: true, nextCursor: FRESH_CURSOR, isLoadingOlder: false,
+      limit: 30,
+      hasMore: true,
+      nextCursor: FRESH_CURSOR,
+      isLoadingOlder: false,
     });
     expect(ids(CONV_A)).toEqual([3, 4, 5, 6, 7].map(oid)); // messages still merged
   });
@@ -513,7 +630,12 @@ describe("functional-updater race regression", () => {
     S().setActiveConversationId(CONV_B);
     const loadB = S().getMessages(); // target resolved now: B
 
-    gateB.resolve(page([msg(8, { conversationId: CONV_B, senderId: PEER_B })], pageInfo({ nextCursor: oid(0x60) })));
+    gateB.resolve(
+      page(
+        [msg(8, { conversationId: CONV_B, senderId: PEER_B })],
+        pageInfo({ nextCursor: oid(0x60) }),
+      ),
+    );
     await loadB;
     gateA.resolve(page([msg(1), msg(2)], pageInfo({ nextCursor: oid(0x61) })));
     await loadA;

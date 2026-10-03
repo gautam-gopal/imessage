@@ -50,7 +50,7 @@ function buildReceipt(message, receiptContext) {
 // Adapter from raw backend message documents to the UI message view-model.
 // senderId is carried through so group UI can attribute messages later.
 // `receipt` is only populated for the current user's own messages.
-function mapMessages(messages, authUser, receiptContext) {
+function mapMessages(messages, authUser, receiptContext, systemUserIds) {
   return messages.map((message) => {
     const isOwn = String(message.senderId) === String(authUser?._id);
 
@@ -58,6 +58,8 @@ function mapMessages(messages, authUser, receiptContext) {
       id: message._id,
       senderId: String(message.senderId),
       role: isOwn ? "me" : "them",
+      // Sent by a system user (the AI assistant): rendered distinctly.
+      isAssistant: systemUserIds.has(String(message.senderId)),
       text: message.text || "",
       time: formatMessageTime(message.createdAt),
       imageUrl: message.image,
@@ -69,7 +71,14 @@ function mapMessages(messages, authUser, receiptContext) {
 
 // View-model for a direct chat. `id` is the real Conversation _id, or null
 // for a pending direct chat that has no Conversation yet.
-function mapDirectView({ id, user, messages, authUser, onlineUsers }) {
+function mapDirectView({
+  id,
+  user,
+  messages,
+  authUser,
+  onlineUsers,
+  systemUserIds,
+}) {
   return {
     id,
     type: "direct",
@@ -82,10 +91,12 @@ function mapDirectView({ id, user, messages, authUser, onlineUsers }) {
       avatarUrl: user.profilePic,
       initials: getInitials(user.fullName),
     },
-    messages: mapMessages(messages, authUser, {
-      type: "direct",
-      peerId: String(user._id),
-    }),
+    messages: mapMessages(
+      messages,
+      authUser,
+      { type: "direct", peerId: String(user._id) },
+      systemUserIds,
+    ),
   };
 }
 
@@ -116,7 +127,12 @@ function mapGroupView({ conversation, messages, authUser, systemUserIds }) {
       avatarUrl: conversation.avatarUrl,
       initials: getInitials(conversation.name),
     },
-    messages: mapMessages(messages, authUser, { type: "group", recipientIds }),
+    messages: mapMessages(
+      messages,
+      authUser,
+      { type: "group", recipientIds },
+      systemUserIds,
+    ),
   };
 }
 
@@ -181,6 +197,7 @@ export function useSelectedConversation() {
           messages,
           authUser,
           onlineUsers,
+          systemUserIds,
         });
       }
     }
@@ -195,6 +212,7 @@ export function useSelectedConversation() {
         messages: [],
         authUser,
         onlineUsers,
+        systemUserIds,
       });
     }
   }

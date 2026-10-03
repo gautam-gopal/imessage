@@ -48,17 +48,24 @@ export function MessageList() {
             {activeConversation.messages.map((message, index) => {
               // Group chats: label other people's messages with the sender's
               // name, once per consecutive run from the same sender.
+              // Assistant replies are labelled in direct chats too, since
+              // there the AI is a third party in a two-person conversation.
               const showSender =
-                isGroup &&
                 message.role === "them" &&
+                (isGroup || message.isAssistant) &&
                 activeConversation.messages[index - 1]?.senderId !==
                   message.senderId;
 
               return (
                 <Fragment key={message.id}>
                   {showSender ? (
-                    <p className="mt-1 px-1 text-[11px] font-medium text-muted">
+                    <p className="mt-1 flex items-center gap-1 px-1 text-[11px] font-medium text-muted">
                       {senderName(message.senderId)}
+                      {message.isAssistant ? (
+                        <span className="rounded bg-accent/15 px-1 py-px text-[10px] font-semibold uppercase tracking-wide text-accent">
+                          AI
+                        </span>
+                      ) : null}
                     </p>
                   ) : null}
                   <MessageBubble message={message} />

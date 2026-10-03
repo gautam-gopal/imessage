@@ -4,12 +4,14 @@ import { persist } from "zustand/middleware";
 import { axiosInstance } from "../lib/axios";
 import { useAuthStore } from "./useAuthStore";
 import toast from "react-hot-toast";
+import { assistantErrorMessage } from "../lib/assistant";
 
 // Tracks this store's own "newMessage" listener so it can be removed by
 // reference, without touching any other listener that might be registered
 // on the same shared socket for other purposes, present or future.
 let newMessageHandler = null;
 let messageReadHandler = null;
+let assistantErrorHandler = null;
 
 // Message ids are 24-char hex ObjectIds. Lowercased fixed-width hex compares
 // lexicographically exactly as the numeric ObjectId ordering does, which is
@@ -627,6 +629,9 @@ export const useChatStore = create(
         if (messageReadHandler) {
           socket.off("message:read", messageReadHandler);
         }
+        if (assistantErrorHandler) {
+          socket.off("assistant:error", assistantErrorHandler);
+        }
 
         newMessageHandler = (newMessage) => {
           const { addedCount } = get().ingestMessages([newMessage]);
@@ -641,8 +646,17 @@ export const useChatStore = create(
           get().applyReadReceipt(payload);
         };
 
+        // Private to the user who mentioned the assistant (server-targeted,
+        // not persisted). A fixed toast id keeps repeated failures to one toast.
+        assistantErrorHandler = (payload) => {
+          toast.error(assistantErrorMessage(payload?.reason), {
+            id: "assistant-error",
+          });
+        };
+
         socket.on("newMessage", newMessageHandler);
         socket.on("message:read", messageReadHandler);
+        socket.on("assistant:error", assistantErrorHandler);
       },
 
       unsubscribeFromMessages: () => {
@@ -653,8 +667,12 @@ export const useChatStore = create(
         if (socket && messageReadHandler) {
           socket.off("message:read", messageReadHandler);
         }
+        if (socket && assistantErrorHandler) {
+          socket.off("assistant:error", assistantErrorHandler);
+        }
         newMessageHandler = null;
         messageReadHandler = null;
+        assistantErrorHandler = null;
       },
       // Selects an existing conversation (direct or group) by its real
       // Conversation _id. Passing null clears the selection entirely,

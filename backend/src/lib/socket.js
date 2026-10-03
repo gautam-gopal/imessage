@@ -53,6 +53,19 @@ export function leaveConversationRoom(conversationId, userId) {
   }
 }
 
+// Emits a private event to every currently-connected socket of one user (all
+// tabs/devices). Not room-based and not persisted: a user with no open socket
+// simply does not receive it. The userId must come from server state, never
+// from client input.
+export function emitToUser(userId, event, payload) {
+  const sockets = userSocketMap[String(userId)];
+  if (!sockets) return;
+
+  for (const socketId of sockets) {
+    io.to(socketId).emit(event, payload);
+  }
+}
+
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;

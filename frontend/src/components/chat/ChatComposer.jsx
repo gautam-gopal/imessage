@@ -1,8 +1,14 @@
 import { Button, TextArea } from "@heroui/react";
-import { ImageIcon, LoaderIcon, SendHorizontalIcon } from "lucide-react";
+import {
+  ImageIcon,
+  LoaderIcon,
+  SendHorizontalIcon,
+  SparklesIcon,
+} from "lucide-react";
 import { useRef } from "react";
 import useKeyboardSound from "../../hooks/useKeyboardSound";
 import { useChatStore } from "../../store/useChatStore";
+import { withAssistantMention } from "../../lib/assistant";
 
 export function ChatComposer() {
   const composerText = useChatStore((state) => state.composerText);
@@ -13,6 +19,7 @@ export function ChatComposer() {
   const setComposerText = useChatStore((state) => state.setComposerText);
   const { playRandomKeyStrokeSound } = useKeyboardSound();
   const mediaInputRef = useRef(null);
+  const textAreaRef = useRef(null);
 
   const playSoundIfEnabled = () => {
     if (isSoundEnabled) playRandomKeyStrokeSound();
@@ -26,6 +33,11 @@ export function ChatComposer() {
   const handleComposerTextChange = (event) => {
     setComposerText(event.target.value);
     playSoundIfEnabled();
+  };
+
+  const handleAskAssistant = () => {
+    setComposerText(withAssistantMention(composerText));
+    textAreaRef.current?.focus?.();
   };
 
   const handleMediaPick = async (event) => {
@@ -70,7 +82,17 @@ export function ChatComposer() {
         >
           <ImageIcon className="size-5 sm:size-6" strokeWidth={2} />
         </Button>
+        <Button
+          variant="ghost"
+          isIconOnly
+          className="size-9 shrink-0 touch-manipulation self-end text-accent"
+          aria-label="Ask NexTalk AI"
+          onPress={handleAskAssistant}
+        >
+          <SparklesIcon className="size-5 sm:size-6" strokeWidth={2} />
+        </Button>
         <TextArea
+          ref={textAreaRef}
           fullWidth
           variant="secondary"
           placeholder="iMessage"

@@ -43,10 +43,18 @@ export function GroupMembersModal({ conversationId }) {
   const knownUsers = new Map(users.map((user) => [String(user._id), user]));
   if (authUser) knownUsers.set(myId, authUser);
 
-  const members = conversation.participantIds.map((id) => ({
-    id,
-    user: knownUsers.get(id),
-  }));
+  // System participants (the AI) are listed last and cannot be removed here:
+  // any member's next @mention would add the assistant back.
+  const members = conversation.participantIds
+    .map((id) => ({ id, user: knownUsers.get(id) }))
+    .sort(
+      (a, b) =>
+        Number(Boolean(a.user?.isSystemUser)) -
+        Number(Boolean(b.user?.isSystemUser)),
+    );
+  const humanMemberCount = members.filter(
+    ({ user }) => !user?.isSystemUser,
+  ).length;
 
   const addCandidates = users.filter(
     (user) =>
@@ -98,10 +106,11 @@ export function GroupMembersModal({ conversationId }) {
             <Modal.Body className="isolate space-y-5 pt-4">
               <div>
                 <h3 className="mb-2 text-sm font-medium text-zinc-400">
-                  Members ({members.length})
+                  Members ({humanMemberCount})
                 </h3>
                 <div className="rounded-xl border border-white/10">
                   {members.map(({ id, user }) => {
+                    const isAssistant = Boolean(user?.isSystemUser);
                     const isSelf = id === myId;
                     const isMemberAdmin = conversation.admins.includes(id);
                     const name = user?.fullName || "Unknown user";
@@ -120,12 +129,14 @@ export function GroupMembersModal({ conversationId }) {
                             {name}
                             {isSelf ? " (You)" : ""}
                           </p>
-                          {isMemberAdmin ? (
+                          {isAssistant ? (
+                            <p className="text-xs text-accent">AI assistant</p>
+                          ) : isMemberAdmin ? (
                             <p className="text-xs text-accent">Admin</p>
                           ) : null}
                         </div>
 
-                        {isSelf ? (
+                        {isAssistant ? null : isSelf ? (
                           <Button
                             size="sm"
                             variant="danger-soft"

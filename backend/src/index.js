@@ -12,6 +12,7 @@ import { errorHandler } from "./middleware/error.middleware.js";
 
 import User from "./models/user.model.js";
 import { connectDB } from "./lib/db.js";
+import { ensureAssistantUser } from "./lib/ai/assistant-user.js";
 import job from "./lib/cron.js";
 
 import clerkWebhook from "./webhooks/clerk.webhook.js";
@@ -58,7 +59,11 @@ if (fs.existsSync(publicDir)) {
 app.use(errorHandler);
 
 server.listen(PORT, () => {
-  connectDB();
+  connectDB()
+    .then(() => ensureAssistantUser())
+    .catch((error) => {
+      console.error("Failed to ensure assistant user:", error.message);
+    });
   console.log(`Server is running on port ${PORT}`);
 
   if (process.env.NODE_ENV === "production") job.start();

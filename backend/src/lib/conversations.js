@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import User from "../models/user.model.js";
 import Conversation from "../models/conversation.model.js";
 
 function sortedPair(userIdA, userIdB) {
@@ -71,6 +72,23 @@ export async function addParticipant(conversationId, userId) {
   return Conversation.findOneAndUpdate(
     { _id: conversationId, type: "group" },
     { $addToSet: { participants: userId } },
+    { new: true },
+  );
+}
+
+// Adds a SYSTEM user (e.g. the AI assistant) to a conversation of either type.
+// Separate from addParticipant on purpose: that one is the group-only human
+// flow. This one refuses any user that is not isSystemUser, so it cannot be
+// used to add a human without the admin/authorization checks, and it never
+// touches `admins`. Returns null if userId is not a system user or the
+// conversation does not exist.
+export async function addSystemParticipant(conversationId, systemUserId) {
+  const isSystem = await User.exists({ _id: systemUserId, isSystemUser: true });
+  if (!isSystem) return null;
+
+  return Conversation.findOneAndUpdate(
+    { _id: conversationId },
+    { $addToSet: { participants: systemUserId } },
     { new: true },
   );
 }

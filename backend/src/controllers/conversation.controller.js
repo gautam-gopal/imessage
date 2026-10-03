@@ -15,6 +15,7 @@ import {
 } from "../lib/socket.js";
 import { markMessagesReadUpTo } from "../lib/read-receipts.js";
 import { getMessagePage } from "../lib/message-history.js";
+import { handleAssistantMention } from "../lib/ai/assistant.js";
 
 export async function createGroup(req, res, next) {
   try {
@@ -234,6 +235,9 @@ export async function sendConversationMessage(req, res, next) {
     io.to(String(conversation._id)).emit("newMessage", newMessage);
 
     res.status(201).json(newMessage);
+
+    // Fire-and-forget: the send never waits on OpenAI. Handles its own errors.
+    void handleAssistantMention(newMessage);
   } catch (error) {
     next(error);
   }
