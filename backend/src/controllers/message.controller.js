@@ -10,6 +10,7 @@ import { hasImageKitConfig, uploadChatMedia } from "../lib/imagekit.js";
 import { io, joinConversationRoom } from "../lib/socket.js";
 import { getMessagePage, emptyMessagePage } from "../lib/message-history.js";
 import { handleAssistantMention } from "../lib/ai/assistant.js";
+import { getUnreadCounts } from "../lib/unread.js";
 
 export async function getUsersForSidebar(req, res) {
   try {
@@ -76,6 +77,13 @@ export async function getConversationsForSidebar(req, res) {
 
     const systemIds = new Set(systemParticipants.map((u) => String(u._id)));
 
+    // Server-derived from the caller's own watermarks; conversations were
+    // already filtered by { participants: loggedInUserId } above.
+    const unreadByConversation = await getUnreadCounts({
+      userId: loggedInUserId,
+      conversationIds: conversations.map((c) => c._id),
+    });
+
     const result = conversations
       .map((c) => {
         if (c.type === "direct") {
@@ -92,6 +100,7 @@ export async function getConversationsForSidebar(req, res) {
             type: "direct",
             peer,
             lastMessageAt: c.lastMessageAt,
+            unreadCount: unreadByConversation[String(c._id)] ?? 0,
           };
         }
 
@@ -106,6 +115,7 @@ export async function getConversationsForSidebar(req, res) {
           participants: c.participants,
           admins: c.admins,
           lastMessageAt: c.lastMessageAt,
+          unreadCount: unreadByConversation[String(c._id)] ?? 0,
         };
       })
       .filter(Boolean);

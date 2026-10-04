@@ -16,6 +16,7 @@ import {
 import { markMessagesReadUpTo } from "../lib/read-receipts.js";
 import { getMessagePage } from "../lib/message-history.js";
 import { handleAssistantMention } from "../lib/ai/assistant.js";
+import { baselineReadWatermark } from "../lib/unread.js";
 
 export async function createGroup(req, res, next) {
   try {
@@ -99,6 +100,15 @@ export async function addMember(req, res, next) {
       const err = new Error("User not found");
       err.statusCode = 404;
       return next(err);
+    }
+
+    try {
+      await baselineReadWatermark({
+        userId: memberId,
+        conversationId: conversation._id,
+      });
+    } catch (error) {
+      console.error("Error baselining read watermark:", error.message);
     }
 
     const updated = await addParticipant(conversation._id, memberId);

@@ -9,6 +9,7 @@
     "db:seed:users": "node src/seeds/user.seed.js",
     "db:seed:messages": "node src/seeds/message.seed.js",
     "db:migrate:conversations": "node src/migrations/001-conversation-backfill.js",
+    "db:migrate:read-state": "node src/migrations/002-read-state-baseline.js",
     "test": "vitest run",
     "test:watch": "vitest"
   },

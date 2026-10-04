@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Message from "../models/message.model.js";
+import { advanceReadWatermark } from "./unread.js";
 
 // Domain operation only. The caller MUST have already verified that userId
 // is a current participant of conversationId (REST: requireConversationMembership;
@@ -38,6 +39,16 @@ export async function markMessagesReadUpTo({
     { $push: { readBy: { userId, readAt } } },
     { timestamps: false },
   );
+
+  // Watermark advances after the receipts are written, and even when no
+  // receipt changed (e.g. messages already marked before the watermark
+  // existed). If the process dies between the two writes the count is merely
+  // too high until the next read; it is never too low.
+  await advanceReadWatermark({
+    userId,
+    conversationId,
+    messageId: anchorId,
+  });
 
   return {
     conversationId,
