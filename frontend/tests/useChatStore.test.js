@@ -6,7 +6,7 @@ vi.mock("../src/lib/axios", () => ({
   axiosInstance: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
 vi.mock("react-hot-toast", () => ({
-  default: { error: vi.fn(), success: vi.fn() },
+  default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }),
 }));
 
 import { axiosInstance } from "../src/lib/axios";

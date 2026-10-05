@@ -1,5 +1,7 @@
 import { useWallpaper } from "../context/wallpaper";
 import { useChatStore } from "../store/useChatStore";
+import { useAuthStore } from "../store/useAuthStore";
+import { useUnreadTitle } from "../hooks/useUnreadTitle";
 import { useSelectedConversation } from "../hooks/useSelectedConversation";
 import { useMarkConversationRead } from "../hooks/useMarkConversationRead";
 import { useEffect } from "react";
@@ -30,6 +32,18 @@ function ChatPage() {
   } = useSelectedConversation();
 
   useMarkConversationRead(activeConversationId);
+  useUnreadTitle();
+
+  // After a socket reconnect, events missed while disconnected are gone;
+  // refetch server state (unread counts, newest page of the open thread).
+  const connectionEpoch = useAuthStore((state) => state.connectionEpoch);
+  const catchUpAfterReconnect = useChatStore(
+    (state) => state.catchUpAfterReconnect,
+  );
+
+  useEffect(() => {
+    if (connectionEpoch > 0) catchUpAfterReconnect();
+  }, [connectionEpoch, catchUpAfterReconnect]);
 
   useEffect(() => {
     getUsers();

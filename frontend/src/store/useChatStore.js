@@ -5,6 +5,10 @@ import { axiosInstance } from "../lib/axios";
 import { useAuthStore } from "./useAuthStore";
 import toast from "react-hot-toast";
 import { assistantErrorMessage } from "../lib/assistant";
+import {
+  buildNotificationText,
+  isConversationInView,
+} from "../lib/notifications";
 
 // Tracks this store's own "newMessage" listener so it can be removed by
 // reference, without touching any other listener that might be registered
@@ -12,6 +16,15 @@ import { assistantErrorMessage } from "../lib/assistant";
 let newMessageHandler = null;
 let messageReadHandler = null;
 let assistantErrorHandler = null;
+
+// getConversations responses can arrive out of order; only the newest
+// request's response may be applied.
+let conversationsRequestSeq = 0;
+
+// Coalesces bursts of "refresh the conversation list" triggers: at most one
+// request in flight plus one queued follow-up, however many triggers arrive.
+let refreshInFlight = null;
+let refreshQueued = false;
 
 // Message ids are 24-char hex ObjectIds. Lowercased fixed-width hex compares
 // lexicographically exactly as the numeric ObjectId ordering does, which is
@@ -60,6 +73,7 @@ function normalizeConversation(raw) {
       id: String(raw._id),
       type: "group",
       lastMessageAt: raw.lastMessageAt,
+      unreadCount: raw.unreadCount ?? 0,
       name: raw.name,
       avatarUrl: raw.avatar || "",
       peerId: null,
@@ -76,6 +90,7 @@ function normalizeConversation(raw) {
     id: String(raw._id),
     type: "direct",
     lastMessageAt: raw.lastMessageAt,
+    unreadCount: raw.unreadCount ?? 0,
     name: raw.peer.fullName,
     avatarUrl: raw.peer.profilePic,
     peerId: String(raw.peer._id),
@@ -193,9 +208,13 @@ export const useChatStore = create(
       },
 
       getConversations: async () => {
+        const requestSeq = ++conversationsRequestSeq;
         set({ isConversationsLoading: true });
         try {
           const res = await axiosInstance.get("/messages/conversations");
+          // A newer request was issued meanwhile; its response wins.
+          if (requestSeq !== conversationsRequestSeq) return;
+
           const conversations = res.data
             .map(normalizeConversation)
             .filter(Boolean);
@@ -424,14 +443,22 @@ export const useChatStore = create(
         };
 
         const socket = useAuthStore.getState().socket;
-        if (socket?.connected) return emitMarkRead(socket, payload);
-
+        if (socket?.connected) {
+          const ack = await emitMarkRead(socket, payload);
+          // modifiedCount > 0: the server broadcasts message:read, whose
+          // handler refreshes our unread counts. 0: nothing is broadcast but
+          // the read watermark may still have moved, so refresh here.
+          if (ack.ok && !ack.modifiedCount) void get().refreshConversations();
+          return ack;
+        }
         try {
           const res = await axiosInstance.post(
             `/conversations/${payload.conversationId}/read`,
             { upToMessageId: payload.upToMessageId },
           );
           if (res.data.modifiedCount > 0) get().applyReadReceipt(res.data);
+          // The REST path broadcasts nothing, so refresh our counts directly.
+          void get().refreshConversations();
           return { ok: true, modifiedCount: res.data.modifiedCount };
         } catch (error) {
           return {
@@ -619,6 +646,90 @@ export const useChatStore = create(
         }
       },
 
+      // Refetches the conversation list (server-derived unread counts and
+      // ordering) with bursts coalesced: one request in flight, at most one
+      // queued behind it. Never rejects.
+      refreshConversations: () => {
+        if (refreshInFlight) {
+          refreshQueued = true;
+          return refreshInFlight;
+        }
+
+        const run = (async () => {
+          try {
+            await get().getConversations();
+          } finally {
+            if (refreshInFlight === run) refreshInFlight = null;
+          }
+
+          if (refreshQueued) {
+            refreshQueued = false;
+            await get().refreshConversations();
+          }
+        })();
+
+        refreshInFlight = run;
+        return run;
+      },
+
+      // Transient alert for a message that just arrived live in a
+      // conversation the user is not looking at. Only called for messages the
+      // store had not seen before (ingest addedCount > 0), so a message that
+      // also arrives via history or reconnect catch-up never alerts twice.
+      // The toast id is the message id as a second guard. Never throws: a
+      // failed alert must not affect message delivery.
+      notifyIncomingMessage: async (message) => {
+        try {
+          const myId = String(useAuthStore.getState().authUser?._id);
+          if (String(message.senderId) === myId) return;
+
+          const conversationId = String(message.conversationId);
+          if (
+            isConversationInView(conversationId, get().activeConversationId)
+          ) {
+            return;
+          }
+
+          let conversation = get().conversations.find(
+            (item) => item.id === conversationId,
+          );
+
+          // First message of a brand-new conversation: it is not in the list
+          // yet, so fetch the list to learn its name.
+          if (!conversation) {
+            await get().getConversations();
+            conversation = get().conversations.find(
+              (item) => item.id === conversationId,
+            );
+          }
+          if (!conversation) return;
+
+          const senderName = get().users.find(
+            (user) => String(user._id) === String(message.senderId),
+          )?.fullName;
+
+          toast(buildNotificationText({ conversation, senderName, message }), {
+            id: `msg-${message._id}`,
+          });
+        } catch (error) {
+          console.error("Error showing message notification:", error?.message);
+        }
+      },
+
+      // After a socket reconnect, realtime events from the gap are lost:
+      // refetch server-derived state. The open thread's newest page is
+      // refetched too (merged by _id, so overlap is harmless; if the gap is
+      // larger than one page, scrolling up pages through it because the
+      // cursor restarts from the newest page). Other threads catch up when
+      // opened, which always refetches the newest page.
+      catchUpAfterReconnect: async () => {
+        await get().getConversations();
+
+        if (get().activeConversationId || get().pendingDirectPeerId) {
+          await get().getMessages();
+        }
+      },
+
       subscribeToMessages: () => {
         const socket = useAuthStore.getState().socket;
         if (!socket) return;
@@ -635,7 +746,10 @@ export const useChatStore = create(
 
         newMessageHandler = (newMessage) => {
           const { addedCount } = get().ingestMessages([newMessage]);
-          if (addedCount > 0) get().getConversations();
+          if (addedCount === 0) return;
+
+          void get().refreshConversations();
+          void get().notifyIncomingMessage(newMessage);
         };
 
         // Routed by the event's own conversationId, independent of the
@@ -644,6 +758,13 @@ export const useChatStore = create(
           if (!payload?.conversationId || !payload?.readerId) return;
           if (!payload.upToMessageId) return;
           get().applyReadReceipt(payload);
+
+          // Our own read (this tab or another device) changes our unread
+          // counts; the server is the source of truth for them.
+          const myId = String(useAuthStore.getState().authUser?._id);
+          if (String(payload.readerId) === myId) {
+            void get().refreshConversations();
+          }
         };
 
         // Private to the user who mentioned the assistant (server-targeted,
@@ -673,6 +794,8 @@ export const useChatStore = create(
         newMessageHandler = null;
         messageReadHandler = null;
         assistantErrorHandler = null;
+        refreshInFlight = null;
+        refreshQueued = false;
       },
       // Selects an existing conversation (direct or group) by its real
       // Conversation _id. Passing null clears the selection entirely,

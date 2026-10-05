@@ -1,7 +1,9 @@
 import { Avatar } from "@heroui/react";
 import { AvatarWithOnlineIndicator } from "./AvatarWithOnlineIndicator";
+import { unreadBadgeLabel } from "../../lib/notifications";
 
 export function ConversationRow({ user, selected, onSelect }) {
+  const unreadLabel = unreadBadgeLabel(user.unreadCount);
   const avatar = (
     <Avatar className="size-12 shrink-0">
       <Avatar.Image alt={user.name} src={user.avatarUrl} />
@@ -28,11 +30,26 @@ export function ConversationRow({ user, selected, onSelect }) {
       )}
 
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-semibold">{user.name}</p>
+        <p
+          className={`truncate text-[15px] ${
+            unreadLabel ? "font-bold" : "font-semibold"
+          }`}
+        >
+          {user.name}
+        </p>
         {user.subtitle ? (
           <p className="truncate text-xs text-muted">{user.subtitle}</p>
         ) : null}
       </div>
+
+      {unreadLabel ? (
+        <span
+          aria-label={`${unreadLabel} unread messages`}
+          className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-accent px-1.5 text-xs font-semibold text-accent-foreground"
+        >
+          {unreadLabel}
+        </span>
+      ) : null}
     </button>
   );
 }

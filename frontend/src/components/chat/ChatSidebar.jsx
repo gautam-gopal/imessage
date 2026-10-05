@@ -10,6 +10,7 @@ import { UserButton } from "@clerk/react";
 import { SearchField, Tabs } from "@heroui/react";
 import { MessageSquareIcon, UsersIcon } from "lucide-react";
 import { ConversationRow } from "./ConversationRow";
+import { useTabVisible } from "../../hooks/useTabVisible";
 import { CreateGroupModal } from "./CreateGroupModal";
 
 function mapUserForList(user, onlineUsers) {
@@ -25,7 +26,11 @@ function mapUserForList(user, onlineUsers) {
 // Row data for a normalized conversation (see normalizeConversation in
 // useChatStore). Groups carry type "group" so ConversationRow renders no
 // presence indicator for them.
-function mapConversationForList(conversation, onlineUsers) {
+function mapConversationForList(
+  conversation,
+  onlineUsers,
+  viewedConversationId,
+) {
   return {
     id: conversation.id,
     type: conversation.type,
@@ -36,6 +41,9 @@ function mapConversationForList(conversation, onlineUsers) {
     name: conversation.name,
     avatarUrl: conversation.avatarUrl,
     initials: getInitials(conversation.name),
+    // The conversation being looked at is read as messages land.
+    unreadCount:
+      conversation.id === viewedConversationId ? 0 : conversation.unreadCount,
     isOnline:
       conversation.type === "direct"
         ? onlineUsers.includes(conversation.peerId)
@@ -66,8 +74,11 @@ function ChatSidebar() {
 
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
+  const tabVisible = useTabVisible();
+  const viewedConversationId = tabVisible ? activeConversationId : null;
+
   const conversationRows = conversations.map((conversation) =>
-    mapConversationForList(conversation, onlineUsers),
+    mapConversationForList(conversation, onlineUsers, viewedConversationId),
   );
   // System users (the AI) are reached by @mention, not by starting a chat.
   const allUsers = users
