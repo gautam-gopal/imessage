@@ -22,7 +22,7 @@ import authRoutes from "./routes/auth.route.js";
 import messageRoutes from "./routes/message.route.js";
 import conversationRoutes from "./routes/conversation.route.js";
 
-import { app, server, io } from "./lib/socket.js";
+import { app, server, io, drainPendingWrites } from "./lib/socket.js";
 
 const PORT = getPort();
 const FRONTEND_URL = process.env.FRONTEND_URL;
@@ -34,7 +34,12 @@ const { shutdown, isShuttingDown } = createShutdown({
   // io.close() also closes the underlying HTTP server and disconnects every
   // socket; clients reconnect to the next instance and run the Stage 10
   // catch-up.
-  closeServer: () => io.close(),
+  closeServer: async () => {
+    await io.close();
+    // The disconnect handlers fired by io.close() start lastSeenAt writes;
+    // let them finish before the DB connection is closed.
+    await drainPendingWrites();
+  },
   // Only a live connection needs draining. close() blocks while the initial
   // connect is still pending, and there is nothing to drain in that state.
   closeDb: async () => {

@@ -17,6 +17,15 @@ const io = new Server(server, { cors: { origin: [allowedOrigin] } });
 // online users map = { userId: Set<socketId> }
 const userSocketMap = {};
 
+// lastSeenAt writes started by socket disconnects. io.close() fires every
+// disconnect handler but does not wait for these DB writes, so shutdown awaits
+// them via drainPendingWrites() before closing the database connection.
+const pendingDisconnectWrites = new Set();
+
+export async function drainPendingWrites() {
+  await Promise.allSettled([...pendingDisconnectWrites]);
+}
+
 // Joins every currently-connected socket of a conversation's participants
 // to that conversation's room. Both the room id and participant list come
 // from the same server-side Conversation document.
@@ -115,12 +124,18 @@ io.on("connection", (socket) => {
 
       io.emit("getOnlineUsers", Object.keys(userSocketMap));
 
-      User.updateOne(
+      // Tracked so graceful shutdown can wait for it (drainPendingWrites)
+      // instead of closing the DB client underneath the write.
+      const write = User.updateOne(
         { _id: userId },
         { $set: { lastSeenAt: new Date() } },
-      ).catch((error) => {
-        console.error("Error updating lastSeenAt:", error.message);
-      });
+      )
+        .catch((error) => {
+          console.error("Error updating lastSeenAt:", error.message);
+        })
+        .finally(() => pendingDisconnectWrites.delete(write));
+
+      pendingDisconnectWrites.add(write);
     }
   });
 

@@ -31,7 +31,7 @@ export async function resolveOrCreateDirectConversation(userIdA, userIdB) {
           lastMessageAt: new Date(0),
         },
       },
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     );
   } catch (error) {
     if (error.code === 11000) {
@@ -72,7 +72,7 @@ export async function addParticipant(conversationId, userId) {
   return Conversation.findOneAndUpdate(
     { _id: conversationId, type: "group" },
     { $addToSet: { participants: userId } },
-    { new: true },
+    { returnDocument: "after" },
   );
 }
 
@@ -89,7 +89,7 @@ export async function addSystemParticipant(conversationId, systemUserId) {
   return Conversation.findOneAndUpdate(
     { _id: conversationId },
     { $addToSet: { participants: systemUserId } },
-    { new: true },
+    { returnDocument: "after" },
   );
 }
 
@@ -130,7 +130,7 @@ export async function removeParticipant(conversationId, userId) {
         admins: objectUserId,
       },
     },
-    { new: true },
+    { returnDocument: "after" },
   );
 }
 

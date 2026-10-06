@@ -28,7 +28,7 @@ export async function ensureAssistantUser() {
     return await User.findOneAndUpdate(
       { clerkId: ASSISTANT_CLERK_ID },
       update,
-      { upsert: true, new: true },
+      { upsert: true, returnDocument: "after" },
     );
   } catch (error) {
     // Two concurrent first calls can race on the unique clerkId index.
