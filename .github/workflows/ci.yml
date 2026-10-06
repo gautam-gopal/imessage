@@ -1,0 +1,150 @@
+# CI for NexTalk.
+#   pull_request -> validation only (lint, tests, build, image smoke test).
+#   push to main -> the same checks again (re-validates what was merged).
+# Deployment is NOT part of this file yet (Stage 11, Portion 4 adds a deploy
+# job that depends on these jobs and runs only on push to main).
+#
+# No secrets are used, so the workflow is safe for pull requests from forks.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded PR runs; never cancel a run on main (a later deploy job
+# must not be interrupted halfway).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # mongodb-memory-server downloads a real mongod binary on first use.
+      # Pin its cache location so actions/cache can keep it between runs.
+      MONGOMS_DOWNLOAD_DIR: ${{ github.workspace }}/.mongodb-binaries
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Cache mongod binary
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.mongodb-binaries
+          # The default mongod version is tied to the mongodb-memory-server
+          # version, which is pinned by the lockfile.
+          key: mongod-${{ runner.os }}-${{ hashFiles('backend/package-lock.json') }}
+      - name: Test
+        run: npm test
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  # Builds the real production image and runs it against a real MongoDB, so
+  # Dockerfile regressions and startup/shutdown regressions fail the PR.
+  image:
+    name: image
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval \"db.adminCommand('ping').ok\""
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # A syntactically valid but fake Clerk key (pk_test_ + base64 of a
+      # domain). It is not a secret; CI never talks to Clerk.
+      - name: Build image
+        run: |
+          PK="pk_test_$(printf 'ci.clerk.accounts.dev$' | base64 -w0)"
+          echo "CI_CLERK_PK=$PK" >> "$GITHUB_ENV"
+          docker build --build-arg VITE_CLERK_PUBLISHABLE_KEY="$PK" -t nextalk:ci .
+
+      - name: Image has production dependencies only and runs as non-root
+        run: |
+          docker run --rm --entrypoint sh nextalk:ci -c '
+            test -d node_modules/@clerk/backend &&
+            test ! -d node_modules/nodemon &&
+            test ! -d node_modules/vitest &&
+            test "$(id -u)" != "0"'
+
+      - name: Start container
+        run: |
+          docker run -d --name nextalk-ci --network host \
+            -e NODE_ENV=production -e PORT=3001 \
+            -e MONGO_URI=mongodb://127.0.0.1:27017/nextalk-ci \
+            -e FRONTEND_URL=http://127.0.0.1:3001 \
+            -e CLERK_SECRET_KEY=sk_test_ci \
+            -e CLERK_PUBLISHABLE_KEY="$CI_CLERK_PK" \
+            -e IMAGEKIT_PRIVATE_KEY=ci \
+            nextalk:ci
+
+      - name: Wait until ready (MongoDB connected)
+        run: |
+          code=000
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/ready || true)
+            [ "$code" = "200" ] && break
+            sleep 2
+          done
+          echo "last /ready status: $code"
+          [ "$code" = "200" ]
+
+      - name: Liveness and static frontend
+        run: |
+          curl -fsS http://127.0.0.1:3001/health
+          curl -fsS http://127.0.0.1:3001/ | grep -q '<div id="root">'
+
+      - name: Graceful shutdown on SIGTERM
+        run: |
+          docker stop -t 15 nextalk-ci
+          docker logs nextalk-ci > shutdown.log 2>&1
+          grep -q '\[shutdown\] complete' shutdown.log
+          test "$(docker inspect -f '{{.State.ExitCode}}' nextalk-ci)" = "0"
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: docker logs nextalk-ci || true
