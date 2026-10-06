@@ -49,7 +49,7 @@ describe("getPort", () => {
   it("uses PORT when valid and falls back to 3000 otherwise", () => {
     expect(getPort({ PORT: "10000" })).toBe(10000);
     expect(getPort({})).toBe(3000);
-    expect(getPort({ PORT: "abc" })).toBe(999);
+    expect(getPort({ PORT: "abc" })).toBe(3000);
     expect(getPort({ PORT: "0" })).toBe(3000);
   });
 });
