@@ -2,6 +2,13 @@
 **/dist
 **/.env
 **/.env.*
+**/tests
+**/coverage
 .git
+.github
 .DS_Store
 npm-debug.log*
+*.md
+Dockerfile
+docker-compose.yml
+.dockerignore

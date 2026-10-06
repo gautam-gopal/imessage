@@ -1,0 +1,47 @@
+# Local production-like stack: the real production image + a local MongoDB.
+# For day-to-day coding with hot reload, keep using `npm run dev` in
+# backend/ and frontend/.
+#
+#   cp .env.example .env     # then fill in the values
+#   docker compose up --build
+#   open http://localhost:3001
+name: nextalk
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test:
+        ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:?Set VITE_CLERK_PUBLISHABLE_KEY in .env}
+    env_file: .env
+    # `environment` wins over env_file, so the container always talks to the
+    # compose MongoDB even if .env holds an Atlas MONGO_URI for other uses.
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      MONGO_URI: mongodb://mongo:27017/nextalk
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
+    ports:
+      - "3001:3001"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    # Longer than the app's 10s shutdown timeout (src/lib/shutdown.js).
+    stop_grace_period: 15s
+
+volumes:
+  mongo-data:
