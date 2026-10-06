@@ -19,6 +19,7 @@
   "type": "module",
   "description": "",
   "dependencies": {
+    "@clerk/backend": "^3.17.2",
     "@clerk/express": "^2.1.67",
     "@imagekit/nodejs": "^7.12.0",
     "cors": "^2.8.6",
@@ -28,13 +29,13 @@
     "file-type": "^22.1.1",
     "mongoose": "^9.10.1",
     "multer": "^2.4.0",
-    "nodemon": "^3.1.14",
     "openai": "^7.27.0",
     "socket.io": "^4.8.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "mongodb-memory-server": "^11.3.0",
+    "nodemon": "^3.1.14",
     "socket.io-client": "^4.8.4",
     "supertest": "^7.3.0",
     "vitest": "^5.0.2"
