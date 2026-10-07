@@ -27,6 +27,12 @@ import { app, server, io, drainPendingWrites } from "./lib/socket.js";
 const PORT = getPort();
 const FRONTEND_URL = process.env.FRONTEND_URL;
 
+// The commit SHA being served. Render sets RENDER_GIT_COMMIT at deploy time;
+// it is null elsewhere (local, compose, CI). The CI deploy job polls /ready
+// until this equals the commit it just deployed. A public repo's commit SHA
+// is not sensitive.
+const COMMIT = process.env.RENDER_GIT_COMMIT || null;
+
 const publicDir = path.join(process.cwd(), "public");
 
 const { shutdown, isShuttingDown } = createShutdown({
@@ -64,7 +70,7 @@ app.get("/ready", (req, res) => {
   if (!db || shuttingDown) {
     return res.status(503).json({ ok: false, db, shuttingDown });
   }
-  res.status(200).json({ ok: true });
+  res.status(200).json({ ok: true, commit: COMMIT });
 });
 
 // it's important that you don't parse the webhook event data, it should be in the raw format
