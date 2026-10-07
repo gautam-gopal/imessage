@@ -1,10 +1,12 @@
 # CI for NexTalk.
 #   pull_request -> validation only (lint, tests, build, image smoke test).
 #   push to main -> the same checks again (re-validates what was merged).
-# Deployment is NOT part of this file yet (Stage 11, Portion 4 adds a deploy
-# job that depends on these jobs and runs only on push to main).
+# The deploy job runs only on push to main, after every check above has
+# passed, and triggers Render through a deploy hook. Render's own Auto-Deploy
+# must be Off, otherwise Render would deploy before/without these checks.
 #
-# No secrets are used, so the workflow is safe for pull requests from forks.
+# Pull-request runs never see the deploy secret (the deploy job is skipped for
+# them), so the workflow is safe for pull requests from forks.
 name: CI
 
 on:
@@ -148,3 +150,55 @@ jobs:
       - name: Container logs (on failure)
         if: failure()
         run: docker logs nextalk-ci || true
+
+  # Deploys exactly the commit that passed CI, then proves it is live.
+  # Requires (Settings -> Secrets and variables -> Actions):
+  #   secret   RENDER_DEPLOY_HOOK_URL  Render service -> Settings -> Deploy Hook
+  #   variable PRODUCTION_URL          e.g. https://<service>.onrender.com
+  deploy:
+    name: deploy
+    needs: [backend, frontend, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    # One production deploy at a time; a newer push waits instead of
+    # cancelling a deploy that is already in progress.
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+    steps:
+      - name: Check deploy configuration
+        run: |
+          [ -n "$DEPLOY_HOOK" ] || { echo "::error::Secret RENDER_DEPLOY_HOOK_URL is not set"; exit 1; }
+          [ -n "$PRODUCTION_URL" ] || { echo "::error::Repository variable PRODUCTION_URL is not set"; exit 1; }
+
+      # ref pins the deploy to this commit rather than "latest on main", so a
+      # second merge cannot sneak in untested code. The hook URL is a secret
+      # and is never echoed.
+      - name: Trigger Render deploy of this commit
+        run: |
+          curl -fsS -X POST "${DEPLOY_HOOK}&ref=${GITHUB_SHA}" > /dev/null
+          echo "Deploy triggered for ${GITHUB_SHA}"
+
+      # /ready reports the commit only once the app is up with MongoDB
+      # connected. During a zero-downtime deploy the old instance keeps
+      # answering with the old commit until the new one passes its health
+      # check, so "commit == this commit" means the new version is serving.
+      - name: Wait until this commit is live and ready
+        run: |
+          url="${PRODUCTION_URL%/}/ready"
+          for i in $(seq 1 75); do
+            body=$(curl -s -m 10 "$url" || true)
+            live=$(printf '%s' "$body" | jq -r '.commit // empty' 2>/dev/null || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then
+              echo "Live commit matches ${GITHUB_SHA}"
+              exit 0
+            fi
+            echo "[$i/75] live commit: ${live:-<not ready>}"
+            sleep 20
+          done
+          echo "::error::${GITHUB_SHA} was not live within 25 minutes. Check the Render deploy logs."
+          exit 1
