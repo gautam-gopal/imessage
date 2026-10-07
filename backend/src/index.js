@@ -100,7 +100,7 @@ if (fs.existsSync(publicDir)) {
 
 app.use(errorHandler);
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   connectDB()
     .then(() => ensureAssistantUser())
     .catch((error) => {
